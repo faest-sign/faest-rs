@@ -6,6 +6,7 @@ use core::marker::PhantomData;
 use core::mem;
 use digest::XofReader;
 use ff::Field;
+use itertools::izip;
 use ndarray::{s, Array1, Array2, ArrayView1, ArrayView2, Axis};
 use rand::thread_rng;
 // use blake3::{Hash as Blake3Hash, Hasher as Blake3Hasher};
@@ -74,10 +75,11 @@ impl<'a, VC: VecCom> VoleInTheHeadSender<VC> {
             let u_0 = &mut self.u;
             xofs[0].read(u_0.as_raw_mut_slice());
             let mut v_0 = self.V.row_mut(0);
-            for x in 1..=255 {
+            debug_assert_eq!(xofs.len(), 256);
+            for (x, xof_x) in xofs.iter_mut().enumerate().skip(1) {
                 let mut r_x_0 = GF2Vector::with_capacity(ell_hat);
                 r_x_0.resize(ell_hat, false);
-                xofs[x].read(r_x_0.as_raw_mut_slice());
+                xof_x.read(r_x_0.as_raw_mut_slice());
                 *u_0 ^= &r_x_0;
                 for (i, b) in r_x_0.iter().enumerate() {
                     if *b {
@@ -101,10 +103,11 @@ impl<'a, VC: VecCom> VoleInTheHeadSender<VC> {
                 r_0_1
             };
             let mut v_i = self.V.row_mut(i);
-            for x in 1..=255 {
+            debug_assert_eq!(xofs.len(), 256);
+            for (x, xof_x) in xofs.iter_mut().enumerate().skip(1) {
                 let mut r_x_i = GF2Vector::with_capacity(ell_hat);
                 r_x_i.resize(ell_hat, false);
-                xofs[x].read(r_x_i.as_raw_mut_slice());
+                xof_x.read(r_x_i.as_raw_mut_slice());
                 u_i ^= &r_x_i;
                 for (i, b) in r_x_i.iter().enumerate() {
                     if *b {
@@ -208,7 +211,7 @@ pub struct VoleInTheHeadReceiver<VC: VecCom> {
 #[allow(non_snake_case)]
 impl<'a, VC: VecCom> VoleInTheHeadReceiver<VC> {
     pub fn new(vole_length: usize, num_repetitions: usize) -> Self {
-        let output = Self {
+        Self {
             vole_length,
             num_repetitions,
             state: VoleInTheHeadReceiverState::New,
@@ -221,8 +224,7 @@ impl<'a, VC: VecCom> VoleInTheHeadReceiver<VC> {
             final_challenges: Default::default(),
             W: Default::default(),
             _phantom_hc: PhantomData,
-        };
-        output
+        }
     }
 
     pub fn generate_consistency_challenge(
@@ -292,8 +294,9 @@ impl<'a, VC: VecCom> VoleInTheHeadReceiver<VC> {
             }
             let mut xofs = xofs.unwrap();
             let mut w_0 = W.row_mut(0);
-            for x in 0..=255 {
-                xofs[x].read(r_x_i.as_raw_mut_slice());
+            debug_assert_eq!(xofs.len(), 256);
+            for (x, xof_x) in xofs.iter_mut().enumerate() {
+                xof_x.read(r_x_i.as_raw_mut_slice());
                 let Delta_i_minus_x = Delta_i - GF2p8(x as u8);
                 for (j, b) in r_x_i.iter().enumerate() {
                     if *b {
@@ -304,22 +307,29 @@ impl<'a, VC: VecCom> VoleInTheHeadReceiver<VC> {
         }
 
         // other iterations
-        for i in 1..tau {
-            let Delta_i = self.final_challenges[i];
-            let xofs = VC::verify(
-                log_q,
-                &self.commitments[i],
-                &decommitments[i],
-                Delta_i.0 as usize,
-            );
+        debug_assert_eq!(self.final_challenges.len(), tau);
+        debug_assert_eq!(self.commitments.len(), tau);
+        debug_assert_eq!(decommitments.len(), tau);
+        for ((i, (&Delta_i, commitment_i, decommitment_i)), correction_value_i) in izip!(
+            self.final_challenges.iter(),
+            self.commitments.iter(),
+            decommitments.iter()
+        )
+        .enumerate()
+        .skip(1)
+        .zip(self.correction_values.iter())
+        {
+            // for i in 1..tau {
+            let xofs = VC::verify(log_q, commitment_i, decommitment_i, Delta_i.0 as usize);
             if xofs.is_none() {
                 self.state = VoleInTheHeadReceiverState::Failed;
                 return false;
             }
             let mut xofs = xofs.unwrap();
             let mut w_i = W.row_mut(i);
-            for x in 0..=255 {
-                xofs[x].read(r_x_i.as_raw_mut_slice());
+            debug_assert_eq!(xofs.len(), 256);
+            for (x, xof_x) in xofs.iter_mut().enumerate() {
+                xof_x.read(r_x_i.as_raw_mut_slice());
                 let Delta_i_minus_x = Delta_i - GF2p8(x as u8);
                 for (j, b) in r_x_i.iter().enumerate() {
                     if *b {
@@ -328,7 +338,7 @@ impl<'a, VC: VecCom> VoleInTheHeadReceiver<VC> {
                 }
             }
 
-            for (j, b) in self.correction_values[i - 1].iter().enumerate() {
+            for (j, b) in correction_value_i.iter().enumerate() {
                 if *b {
                     w_i[j] += Delta_i;
                 }
@@ -376,8 +386,8 @@ impl<'a, VC: VecCom> VoleInTheHeadReceiver<VC> {
 mod tests {
     use super::*;
     use crate::common::Block128;
-    use crate::veccom::GgmVecCom;
     use crate::primitives::{Aes128CtrLdPrg, Blake3LE};
+    use crate::veccom::GgmVecCom;
     use blake3;
 
     #[test]

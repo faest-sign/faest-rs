@@ -85,6 +85,7 @@ impl UnreducedField for UnreducedGF2p8 {
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Add for GF2p8 {
     type Output = Self;
     #[inline(always)]
@@ -99,6 +100,7 @@ impl Add<&Self> for GF2p8 {
         self + *other
     }
 }
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Add<UnreducedGF2p8> for GF2p8 {
     type Output = UnreducedGF2p8;
     #[inline(always)]
@@ -205,6 +207,7 @@ impl Neg for GF2p8 {
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Sub for GF2p8 {
     type Output = Self;
     #[inline(always)]
@@ -212,6 +215,7 @@ impl Sub for GF2p8 {
         self + other
     }
 }
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Sub<&Self> for GF2p8 {
     type Output = Self;
     #[inline(always)]
@@ -219,6 +223,7 @@ impl Sub<&Self> for GF2p8 {
         self + other
     }
 }
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Sub<UnreducedGF2p8> for GF2p8 {
     type Output = UnreducedGF2p8;
     #[inline(always)]
@@ -226,12 +231,14 @@ impl Sub<UnreducedGF2p8> for GF2p8 {
         self + other
     }
 }
+#[allow(clippy::suspicious_op_assign_impl)]
 impl SubAssign for GF2p8 {
     #[inline(always)]
     fn sub_assign(&mut self, other: Self) {
         *self += other
     }
 }
+#[allow(clippy::suspicious_op_assign_impl)]
 impl SubAssign<&Self> for GF2p8 {
     #[inline(always)]
     fn sub_assign(&mut self, other: &Self) {

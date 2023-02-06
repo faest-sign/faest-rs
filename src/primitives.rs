@@ -3,7 +3,6 @@ use crate::traits::{LeafExpander, LengthDoubling};
 use aes::cipher::crypto_common::Block;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
-use blake3;
 use core::marker::PhantomData;
 
 pub struct Aes128CtrLdPrg {}
