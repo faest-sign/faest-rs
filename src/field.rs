@@ -636,6 +636,24 @@ impl Field for GF2p128 {
     }
 }
 
+
+pub trait VecToGF2p128: Sized {
+    const VECTOR_SIZE: usize;
+    fn convert(vec: &[Self]) -> GF2p128;
+}
+
+impl VecToGF2p128 for GF2p8 {
+    const VECTOR_SIZE: usize = 16;
+    fn convert(vec: &[Self]) -> GF2p128 {
+        debug_assert_eq!(vec.len(), Self::VECTOR_SIZE);
+        let mut bytes = [0u8; Self::VECTOR_SIZE];
+        for (b, x) in bytes.iter_mut().zip(vec.iter()) {
+            *b = x.0;
+        }
+        GF2p128::from_repr(bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
