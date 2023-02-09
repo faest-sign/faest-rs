@@ -11,53 +11,46 @@ use ndarray::{s, Array1, Array2, ArrayView1, ArrayView2, Axis};
 use rand::thread_rng;
 // use blake3::{Hash as Blake3Hash, Hasher as Blake3Hasher};
 
+type Vector<T> = Array1<T>;
+type VectorView<'a, T> = ArrayView1<'a, T>;
+type Matrix<T> = Array2<T>;
+type MatrixView<'a, T> = ArrayView2<'a, T>;
+
 pub trait VoleInTheHeadSender {
     type Commitment;
+    type Challenge;
+    type Response;
     type Decommitment;
     type Field;
-    type Vector;
-    type Matrix;
-    type MatrixView<'a>
-    where
-        Self: 'a;
 
     const FIELD_SIZE: usize;
 
     fn new(vole_length: usize, num_repetitions: usize) -> Self;
     fn commit_message(&mut self, message: GF2Vector) -> Self::Commitment;
     fn commit_random(&mut self) -> Self::Commitment;
-    fn consistency_check_respond(
-        &mut self,
-        random_points: Self::Vector,
-    ) -> (Self::Vector, Self::Matrix);
+    fn consistency_check_respond(&mut self, random_points: Self::Challenge) -> Self::Response;
     #[allow(non_snake_case)]
-    fn decommit(&mut self, Deltas: Self::Vector) -> Self::Decommitment;
-    fn get_output(&self) -> (&GF2View, Self::MatrixView<'_>);
+    fn decommit(&mut self, Deltas: Vector<Self::Field>) -> Self::Decommitment;
+    fn get_output(&self) -> (&GF2View, MatrixView<'_, Self::Field>);
 }
 
 pub trait VoleInTheHeadReceiver {
     type Commitment;
+    type Challenge;
+    type Response;
     type Decommitment;
     type Field;
-    type Vector;
-    type VectorView<'a>
-    where
-        Self: 'a;
-    type Matrix;
-    type MatrixView<'a>
-    where
-        Self: 'a;
 
     const FIELD_SIZE: usize;
 
     fn new(vole_length: usize, num_repetitions: usize) -> Self;
     fn receive_commitment(&mut self, commitment: Self::Commitment);
     fn receive_random_commitment(&mut self, commitment: Self::Commitment);
-    fn generate_consistency_challenge(&mut self) -> Self::Vector;
-    fn store_consistency_response(&mut self, consistency_response: (Self::Vector, Self::Matrix));
-    fn generate_final_challenge(&mut self) -> Self::Vector;
+    fn generate_consistency_challenge(&mut self) -> Self::Challenge;
+    fn store_consistency_response(&mut self, consistency_response: Self::Response);
+    fn generate_final_challenge(&mut self) -> Vector<Self::Field>;
     fn receive_decommitment(&mut self, decommitments: &Self::Decommitment) -> bool;
-    fn get_output(&self) -> (Self::VectorView<'_>, Self::MatrixView<'_>);
+    fn get_output(&self) -> (VectorView<'_, Self::Field>, MatrixView<'_, Self::Field>);
 }
 
 type GF2Vector = BitVec<u8>;
@@ -173,6 +166,7 @@ impl<VC: VecCom> VoleInTheHeadSenderFromVC<VC> {
             mem::swap(&mut tmp, &mut self.V);
             tmp = tmp.reversed_axes();
             mem::swap(&mut tmp, &mut self.V);
+            self.V = self.V.as_standard_layout().into_owned();
         }
 
         self.state = VoleInTheHeadSenderState::Committed;
@@ -184,11 +178,10 @@ impl<VC: VecCom> VoleInTheHeadSenderFromVC<VC> {
 #[allow(non_snake_case)]
 impl<VC: VecCom> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC> {
     type Commitment = (Vec<VC::Commitment>, Vec<GF2Vector>);
+    type Challenge = Vector<Self::Field>;
+    type Response = (Vector<Self::Field>, Matrix<Self::Field>);
     type Decommitment = Vec<VC::Decommitment>;
     type Field = GF2p8;
-    type Vector = GF2p8Vector;
-    type Matrix = GF2p8Matrix;
-    type MatrixView<'a> = GF2p8MatrixView<'a> where Self: 'a;
 
     const FIELD_SIZE: usize = 8;
 
@@ -217,8 +210,8 @@ impl<VC: VecCom> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC> {
 
     fn consistency_check_respond(
         &mut self,
-        random_points: Self::Vector,
-    ) -> (Self::Vector, Self::Matrix) {
+        random_points: Vector<Self::Field>,
+    ) -> (Vector<Self::Field>, Matrix<Self::Field>) {
         assert_eq!(self.state, VoleInTheHeadSenderState::Committed);
         assert_eq!(random_points.len(), self.num_repetitions);
 
@@ -252,8 +245,8 @@ impl<VC: VecCom> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC> {
         decommitments
     }
 
-    fn get_output(&self) -> (&GF2View, Self::MatrixView<'_>) {
-        assert_eq!(self.state, VoleInTheHeadSenderState::Ready);
+    fn get_output(&self) -> (&GF2View, MatrixView<'_, Self::Field>) {
+        assert_ne!(self.state, VoleInTheHeadSenderState::New);
         let tau = self.num_repetitions;
         let ell = self.vole_length;
         assert_eq!(self.V.shape(), &[ell + tau, tau]);
@@ -293,12 +286,10 @@ pub struct VoleInTheHeadReceiverFromVC<VC: VecCom> {
 #[allow(non_snake_case)]
 impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
     type Commitment = (Vec<VC::Commitment>, Vec<GF2Vector>);
+    type Challenge = Vector<Self::Field>;
+    type Response = (Vector<Self::Field>, Matrix<Self::Field>);
     type Decommitment = Vec<VC::Decommitment>;
     type Field = GF2p8;
-    type Vector = GF2p8Vector;
-    type VectorView<'a> = GF2p8VectorView<'a> where Self: 'a;
-    type Matrix = GF2p8Matrix;
-    type MatrixView<'a> = GF2p8MatrixView<'a> where Self: 'a;
 
     const FIELD_SIZE: usize = 8;
 
@@ -465,6 +456,7 @@ impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
 
         // transpose W s.t. we can access it row-wise
         self.W = W.reversed_axes();
+        self.W = self.W.as_standard_layout().to_owned();
         let mut lhs = Default::default();
         let Deltas = &self.final_challenges;
         let u_tilde = &self.u_tilde;
@@ -530,7 +522,7 @@ mod tests {
             let commitment = sender.commit_random();
             receiver.receive_random_commitment(commitment);
         } else {
-            let commitment = sender.commit(messages.clone());
+            let commitment = sender.commit_message(messages.clone());
             receiver.receive_commitment(commitment);
         }
         let consistency_challenge = receiver.generate_consistency_challenge();
