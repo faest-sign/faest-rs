@@ -1,6 +1,7 @@
 pub mod aes;
 mod arithmetic;
 mod common;
+pub mod faest;
 pub mod field;
 pub mod homcom;
 mod primitives;
