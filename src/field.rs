@@ -194,9 +194,10 @@ macro_rules! impl_arithmetic {
         }
         impl InnerProduct for $field_name {
             #[inline(always)]
-            fn inner_product<I>(iter1: I, iter2: I) -> Self
+            fn inner_product<I, J>(iter1: I, iter2: J) -> Self
             where
                 I: Iterator<Item = Self>,
+                J: Iterator<Item = Self>,
             {
                 iter1
                     .zip(iter2)
@@ -207,9 +208,10 @@ macro_rules! impl_arithmetic {
         }
         impl<'a> InnerProduct<&'a Self> for $field_name {
             #[inline(always)]
-            fn inner_product<I>(iter1: I, iter2: I) -> Self
+            fn inner_product<I, J>(iter1: I, iter2: J) -> Self
             where
                 I: Iterator<Item = &'a Self>,
+                J: Iterator<Item = &'a Self>,
             {
                 InnerProduct::inner_product(iter1.copied(), iter2.copied())
             }
@@ -256,9 +258,10 @@ pub trait LazyField: Add<Self::UF> + Sub<Self::UF> + LazyMul<Output = Self::UF> 
 }
 
 pub trait InnerProduct<A = Self> {
-    fn inner_product<I>(iter1: I, iter2: I) -> Self
+    fn inner_product<I, J>(iter1: I, iter2: J) -> Self
     where
-        I: Iterator<Item = A>;
+        I: Iterator<Item = A>,
+        J: Iterator<Item = A>;
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -350,11 +353,11 @@ impl GF2p128 {
         [x[0], x[1]]
     }
 
-    const fn from_u128(val: u128) -> Self {
+    pub const fn from_u128(val: u128) -> Self {
         Self([val as u64, (val >> 64) as u64])
     }
 
-    const fn to_u128(self) -> u128 {
+    pub const fn to_u128(self) -> u128 {
         (self.0[1] as u128) << 64 | self.0[0] as u128
     }
 }
@@ -525,7 +528,6 @@ impl Mul for GF2p128 {
         z[1] = (xy_00 >> 64) as u64 ^ xy_10 as u64 ^ xy_01 as u64;
         z[2] = (xy_10 >> 64) as u64 ^ (xy_01 >> 64) as u64 ^ xy_11 as u64;
         z[3] = (xy_11 >> 64) as u64;
-        eprintln!("z = 0x{:016x}{:016x}{:016x}{:016x}", z[3], z[2], z[1], z[0]);
         Self(Self::reduce(z))
     }
 }
@@ -636,7 +638,6 @@ impl Field for GF2p128 {
     }
 }
 
-
 pub trait VecToGF2p128: Sized {
     const VECTOR_SIZE: usize;
     fn convert(vec: &[Self]) -> GF2p128;
@@ -651,6 +652,18 @@ impl VecToGF2p128 for GF2p8 {
             *b = x.0;
         }
         GF2p128::from_repr(bytes)
+    }
+}
+
+impl From<u8> for GF2p8 {
+    fn from(val: u8) -> Self {
+        Self(val)
+    }
+}
+
+impl Into<u8> for GF2p8 {
+    fn into(self) -> u8 {
+        self.0
     }
 }
 
