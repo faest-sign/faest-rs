@@ -2,7 +2,20 @@ use crate::field::GF2p8;
 use ff::Field;
 use std::fmt;
 
-pub const EXTENDED_WITNESS_BYTE_SIZE: usize = 16 * (11 + 10);
+pub const EXTENDED_WITNESS_BYTE_SIZE: usize = 16 + 10 * 4 + 16 * 10;
+
+pub const ROUND_CONSTANTS: [GF2p8; 10] = [
+    F(0x01),
+    F(0x02),
+    F(0x04),
+    F(0x08),
+    F(0x10),
+    F(0x20),
+    F(0x40),
+    F(0x80),
+    F(0x1b),
+    F(0x36),
+];
 
 #[allow(non_snake_case)]
 const fn F(x: u8) -> GF2p8 {
@@ -15,10 +28,11 @@ impl Aes {
     pub fn compute_extended_witness(key: [u8; 16], input: [u8; 16]) -> Option<(Vec<u8>, [u8; 16])> {
         let mut buf = Vec::with_capacity(EXTENDED_WITNESS_BYTE_SIZE);
 
-        // TODO: for now, commit directly to round keys and ignore key schedule constraints
-        let round_keys = KeyExpansion::expand_128(key.map(GF2p8));
-        buf.extend(round_keys.iter().flatten().copied().map(Into::<u8>::into));
-        assert_eq!(buf.len(), 11 * 16);
+        let (round_keys, inv_outputs) =
+            KeyExpansion::expand_and_collect_inv_outputs_128(key.map(GF2p8));
+        buf.extend(&key);
+        buf.extend(inv_outputs.iter().flatten().copied().map(Into::<u8>::into));
+        assert_eq!(buf.len(), 16 + 10 * 4);
 
         let input_state = AesState(input.map(GF2p8));
         let (output_state, inv_outputs) = input_state.encrypt_and_collect_inv_outputs(round_keys);
@@ -228,41 +242,44 @@ impl fmt::Debug for AesState {
 
 pub struct KeyExpansion {}
 
-const ROUND_CONSTANTS: [GF2p8; 10] = [
-    F(0x01),
-    F(0x02),
-    F(0x04),
-    F(0x08),
-    F(0x10),
-    F(0x20),
-    F(0x40),
-    F(0x80),
-    F(0x1b),
-    F(0x36),
-];
-
 impl KeyExpansion {
     fn rot_word(w: &[GF2p8]) -> [GF2p8; 4] {
         assert_eq!(w.len(), 4);
         [w[1], w[2], w[3], w[0]]
     }
 
-    fn sub_word(w: &[GF2p8]) -> [GF2p8; 4] {
+    fn sub_word(w: &[GF2p8]) -> ([GF2p8; 4], [GF2p8; 4]) {
         assert_eq!(w.len(), 4);
-        [
-            AesState::sbox_single(w[0]),
-            AesState::sbox_single(w[1]),
-            AesState::sbox_single(w[2]),
-            AesState::sbox_single(w[3]),
-        ]
+        let inv_out = [
+            AesState::sbox_invert_single(w[0]),
+            AesState::sbox_invert_single(w[1]),
+            AesState::sbox_invert_single(w[2]),
+            AesState::sbox_invert_single(w[3]),
+        ];
+        let out = [
+            AesState::sbox_add_single(AesState::sbox_rotations_single(inv_out[0])),
+            AesState::sbox_add_single(AesState::sbox_rotations_single(inv_out[1])),
+            AesState::sbox_add_single(AesState::sbox_rotations_single(inv_out[2])),
+            AesState::sbox_add_single(AesState::sbox_rotations_single(inv_out[3])),
+        ];
+        (out, inv_out)
     }
 
     pub fn expand_128(key: [GF2p8; 16]) -> [[GF2p8; 16]; 11] {
+        Self::expand_and_collect_inv_outputs_128(key).0
+    }
+
+    pub fn expand_and_collect_inv_outputs_128(
+        key: [GF2p8; 16],
+    ) -> ([[GF2p8; 16]; 11], [[GF2p8; 4]; 10]) {
         let mut round_keys: [[GF2p8; 16]; 11] = Default::default();
+        let mut inv_outputs = [[GF2p8::ZERO; 4]; 10];
         round_keys[0] = key;
         let rounds = 11;
         for i in 1..rounds {
-            let mut new_word = Self::sub_word(&Self::rot_word(&round_keys[i - 1][12..16]));
+            let (mut new_word, inv_out) =
+                Self::sub_word(&Self::rot_word(&round_keys[i - 1][12..16]));
+            inv_outputs[i - 1] = inv_out;
             new_word[0] += ROUND_CONSTANTS[i - 1];
             debug_assert_eq!(new_word.len(), 4);
             for (j, new_word_j) in new_word.iter().copied().enumerate() {
@@ -276,7 +293,7 @@ impl KeyExpansion {
             }
         }
 
-        round_keys
+        (round_keys, inv_outputs)
     }
 }
 

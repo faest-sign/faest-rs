@@ -1,4 +1,4 @@
-use crate::aes::{Aes, EXTENDED_WITNESS_BYTE_SIZE};
+use crate::aes::{Aes, EXTENDED_WITNESS_BYTE_SIZE, ROUND_CONSTANTS};
 use crate::field::{BytesRepr, GF2p128, GF2p8, InnerProduct};
 use crate::homcom::{HomComReceiver, HomComSender};
 use bitvec::vec::BitVec;
@@ -29,6 +29,8 @@ where
     tags: Vec<GF2p128>,
     mask: GF2p128,
     mask_tag: GF2p128,
+    key_schedule_intermediate_states: Vec<[GF2p8; 4]>,
+    key_schedule_intermediate_state_tags: Vec<[GF2p128; 4]>,
     round_keys: Vec<[GF2p8; 16]>,
     round_key_tags: Vec<[GF2p128; 16]>,
     intermediate_states: Vec<[GF2p8; 16]>,
@@ -69,6 +71,8 @@ where
             tags: Default::default(),
             mask: Default::default(),
             mask_tag: Default::default(),
+            key_schedule_intermediate_states: Default::default(),
+            key_schedule_intermediate_state_tags: Default::default(),
             round_keys: Default::default(),
             round_key_tags: Default::default(),
             intermediate_states: Default::default(),
@@ -113,31 +117,82 @@ where
             (mask, mask_tag)
         };
 
-        // iterate through the witness and the tags in 128 bit chunks
-        let mut witness_state_chunks_it = witness_bytes.chunks_exact(16);
-        let mut tag_state_chunks_it = self.tags.chunks_exact(128);
-        assert_eq!(witness_state_chunks_it.len(), 11 + 10 + 1);
-        assert_eq!(tag_state_chunks_it.len(), 11 + 10 + 1);
+        self.key_schedule_intermediate_states = Vec::with_capacity(10);
+        self.key_schedule_intermediate_state_tags = Vec::with_capacity(10);
+        self.round_keys = Vec::with_capacity(11);
+        self.round_key_tags = Vec::with_capacity(11);
 
-        // prepare round keys
-        (self.round_keys, self.round_key_tags) = {
-            let mut values = Vec::with_capacity(11);
-            let mut tags = Vec::with_capacity(11);
-            for _ in 0..11 {
-                let wit_chunk =
-                    <&[u8] as TryInto<[u8; 16]>>::try_into(witness_state_chunks_it.next().unwrap())
-                        .unwrap();
-                let round_key = wit_chunk.map(GF2p8);
-                values.push(round_key);
-                let tag_chunk = tag_state_chunks_it.next().unwrap();
-                let mut round_key_tags: [GF2p128; 16] = Default::default();
-                for j in 0..16 {
-                    round_key_tags[j] = lift_into_gf2p8_subfield(&tag_chunk[8 * j..8 * (j + 1)]);
-                }
-                tags.push(round_key_tags);
+        // handle the first round key
+        {
+            let witness_key_chunk: [u8; 16] = witness_bytes[0..16].try_into().unwrap();
+            let tag_key_chunk = &self.tags[0..128];
+            let round_key = witness_key_chunk.map(GF2p8);
+            self.round_keys.push(round_key);
+            let mut round_key_tags: [GF2p128; 16] = Default::default();
+            for j in 0..16 {
+                round_key_tags[j] = lift_into_gf2p8_subfield(&tag_key_chunk[8 * j..8 * (j + 1)]);
             }
-            (values, tags)
-        };
+            self.round_key_tags.push(round_key_tags);
+        }
+        // handle the other round keys
+        {
+            // iterate through the witness and the tags in 32 bit chunks
+            let mut witness_word_chunks_it = witness_bytes[16..16 + 4 * 10].chunks_exact(4);
+            let mut tag_word_chunks_it = self.tags[128..128 + 32 * 10].chunks_exact(32);
+            assert_eq!(witness_word_chunks_it.len(), 10);
+            assert_eq!(tag_word_chunks_it.len(), 10);
+
+            for round_key_i in 1..11 {
+                {
+                    let wit_chunk = <&[u8] as TryInto<[u8; 4]>>::try_into(
+                        witness_word_chunks_it.next().unwrap(),
+                    )
+                    .unwrap()
+                    .map(GF2p8);
+                    self.key_schedule_intermediate_states.push(wit_chunk);
+                    let mut round_key = self.round_keys[round_key_i - 1];
+                    let after_sbox = wit_chunk.map(rotate_gf2p8).map(|x| x + GF2p8(0x63));
+                    round_key[0] += after_sbox[0] + ROUND_CONSTANTS[round_key_i - 1];
+                    round_key[1] += after_sbox[1];
+                    round_key[2] += after_sbox[2];
+                    round_key[3] += after_sbox[3];
+                    for j in 1..4 {
+                        round_key[j * 4] += round_key[(j - 1) * 4];
+                        round_key[j * 4 + 1] += round_key[(j - 1) * 4 + 1];
+                        round_key[j * 4 + 2] += round_key[(j - 1) * 4 + 2];
+                        round_key[j * 4 + 3] += round_key[(j - 1) * 4 + 3];
+                    }
+                    self.round_keys.push(round_key);
+                }
+                {
+                    let tag_chunk = tag_word_chunks_it.next().unwrap();
+                    {
+                        let mut inv_out = [GF2p128::ZERO; 4];
+                        for j in 0..4 {
+                            inv_out[j] = lift_into_gf2p8_subfield(&tag_chunk[8 * j..8 * (j + 1)]);
+                        }
+                        self.key_schedule_intermediate_state_tags.push(inv_out);
+                    }
+                    let mut after_sbox = [GF2p128::ZERO; 4];
+                    for j in 0..4 {
+                        after_sbox[j] =
+                            lift_into_rotated_gf2p8_subfield(&tag_chunk[8 * j..8 * (j + 1)]);
+                    }
+                    let mut round_key_tag = self.round_key_tags[round_key_i - 1];
+                    round_key_tag[0] += after_sbox[0];
+                    round_key_tag[1] += after_sbox[1];
+                    round_key_tag[2] += after_sbox[2];
+                    round_key_tag[3] += after_sbox[3];
+                    for i in 1..4 {
+                        round_key_tag[i * 4] += round_key_tag[(i - 1) * 4];
+                        round_key_tag[i * 4 + 1] += round_key_tag[(i - 1) * 4 + 1];
+                        round_key_tag[i * 4 + 2] += round_key_tag[(i - 1) * 4 + 2];
+                        round_key_tag[i * 4 + 3] += round_key_tag[(i - 1) * 4 + 3];
+                    }
+                    self.round_key_tags.push(round_key_tag);
+                }
+            }
+        }
 
         // prepare intermediate states
         (
@@ -150,6 +205,11 @@ where
             let mut tags = Vec::with_capacity(10);
             let mut l_inv_outputs = Vec::with_capacity(10);
             let mut l_tags = Vec::with_capacity(10);
+
+            let mut witness_state_chunks_it = witness_bytes[16 + 4 * 10..].chunks_exact(16);
+            let mut tag_state_chunks_it = self.tags[128 + 32 * 10..].chunks_exact(128);
+            assert_eq!(witness_state_chunks_it.len(), 10 + 1);
+            assert_eq!(tag_state_chunks_it.len(), 10 + 1);
 
             for _ in 0..10 {
                 let wit_chunk =
@@ -179,12 +239,17 @@ where
         &mut self,
     ) -> (
         (GF2p128, GF2p128),
+        (&[[GF2p8; 4]], &[[GF2p128; 4]]),
         (&[[GF2p8; 16]], &[[GF2p128; 16]]),
         (&[[GF2p8; 16]], &[[GF2p128; 16]]),
         (&[[GF2p8; 16]], &[[GF2p128; 16]]),
     ) {
         (
             (self.mask, self.mask_tag),
+            (
+                &self.key_schedule_intermediate_states,
+                &self.key_schedule_intermediate_state_tags,
+            ),
             (&self.round_keys, &self.round_key_tags),
             (&self.intermediate_states, &self.intermediate_state_tags),
             (
@@ -200,7 +265,36 @@ where
         let mut A0 = self.mask_tag;
         let mut A1 = self.mask;
 
-        // TODO: key schedule conditions
+        // key schedule conditions
+        for key_schedule_round_i in 0..10 {
+            let inv_input = {
+                let round_key = self.round_keys[key_schedule_round_i];
+                [round_key[13], round_key[14], round_key[15], round_key[12]]
+            };
+            let inv_input_tag = {
+                let round_key_tag = self.round_key_tags[key_schedule_round_i];
+                [
+                    round_key_tag[13],
+                    round_key_tag[14],
+                    round_key_tag[15],
+                    round_key_tag[12],
+                ]
+            };
+            let inv_output = self.key_schedule_intermediate_states[key_schedule_round_i];
+            let inv_output_tag = self.key_schedule_intermediate_state_tags[key_schedule_round_i];
+            for j in 0..4 {
+                let chi_k = GF2p128::random(&mut chi_rng);
+                A0 += chi_k * (inv_input_tag[j] * inv_output_tag[j]);
+                A1 += chi_k
+                    * (inv_input_tag[j] * GF2p128::embed_gf2p8(inv_output[j])
+                        + inv_output_tag[j] * GF2p128::embed_gf2p8(inv_input[j]));
+                assert_eq!(
+                    inv_input[j] * inv_output[j],
+                    GF2p8::ONE,
+                    "condition failed in key schedule round {key_schedule_round_i}"
+                );
+            }
+        }
 
         // first round
         {
@@ -291,7 +385,11 @@ where
                 A1 += chi_k
                     * (inv_input_tag[j] * GF2p128::embed_gf2p8(inv_output[j])
                         + inv_output_tag[j] * GF2p128::embed_gf2p8(inv_input[j]));
-                assert_eq!(inv_input[j] * inv_output[j], GF2p8::ONE);
+                assert_eq!(
+                    inv_input[j] * inv_output[j],
+                    GF2p8::ONE,
+                    "wrong values in sbox layer {sbox_layer_i}, byte {j}"
+                );
             }
         }
 
@@ -381,6 +479,7 @@ where
     global_key: GF2p128,
     keys: Vec<GF2p128>,
     mask_key: GF2p128,
+    key_schedule_intermediate_state_keys: Vec<[GF2p128; 4]>,
     round_key_keys: Vec<[GF2p128; 16]>,
     intermediate_state_keys: Vec<[GF2p128; 16]>,
     rotated_intermediate_state_keys: Vec<[GF2p128; 16]>,
@@ -396,6 +495,7 @@ where
             hc_receiver: HCR::new(EXTENDED_WITNESS_BYTE_SIZE * 8 + 128),
             chi_seed: Default::default(),
             proof: Default::default(),
+            key_schedule_intermediate_state_keys: Default::default(),
             global_key: Default::default(),
             keys: Default::default(),
             mask_key: Default::default(),
@@ -423,6 +523,7 @@ where
         self.hc_receiver.choose()
     }
 
+    #[allow(non_snake_case)]
     fn lift_commitments(&mut self) {
         // prepare uniform mask
         self.mask_key = {
@@ -433,23 +534,56 @@ where
             )
         };
 
-        // iterate through the witness and the tags in 128 bit chunks
-        let mut key_state_chunks_it = self.keys.chunks_exact(128);
-        assert_eq!(key_state_chunks_it.len(), 11 + 10 + 1);
+        self.round_key_keys = Vec::with_capacity(11);
 
-        // prepare round keys
-        self.round_key_keys = {
-            let mut keys = Vec::with_capacity(11);
-            for _ in 0..11 {
-                let key_chunk = key_state_chunks_it.next().unwrap();
-                let mut round_key_keys: [GF2p128; 16] = Default::default();
-                for j in 0..16 {
-                    round_key_keys[j] = lift_into_gf2p8_subfield(&key_chunk[8 * j..8 * (j + 1)]);
-                }
-                keys.push(round_key_keys);
+        // handle the first round key
+        {
+            let key_chunk = &self.keys[0..128];
+            let mut round_key_keys: [GF2p128; 16] = Default::default();
+            for j in 0..16 {
+                round_key_keys[j] = lift_into_gf2p8_subfield(&key_chunk[8 * j..8 * (j + 1)]);
             }
-            keys
-        };
+            self.round_key_keys.push(round_key_keys);
+        }
+        // handle the other round keys
+        {
+            // iterate through the witness and the tags in 32 bit chunks
+            let mut key_word_chunks_it = self.keys[128..128 + 32 * 10].chunks_exact(32);
+            assert_eq!(key_word_chunks_it.len(), 10);
+
+            let Delta = self.global_key;
+            let Delta_x_emb_Gamma = Delta * GF2p128::embed_gf2p8(GF2p8(0x63));
+
+            for round_key_i in 1..11 {
+                let key_chunk = key_word_chunks_it.next().unwrap();
+                {
+                    let mut inv_out = [GF2p128::ZERO; 4];
+                    for j in 0..4 {
+                        inv_out[j] = lift_into_gf2p8_subfield(&key_chunk[8 * j..8 * (j + 1)]);
+                    }
+                    self.key_schedule_intermediate_state_keys.push(inv_out);
+                }
+                let mut after_sbox = [GF2p128::ZERO; 16];
+                for j in 0..4 {
+                    after_sbox[j] =
+                        lift_into_rotated_gf2p8_subfield(&key_chunk[8 * j..8 * (j + 1)])
+                            - Delta_x_emb_Gamma;
+                }
+                let mut round_key_key = self.round_key_keys[round_key_i - 1];
+                round_key_key[0] +=
+                    after_sbox[0] - Delta * GF2p128::embed_gf2p8(ROUND_CONSTANTS[round_key_i - 1]);
+                round_key_key[1] += after_sbox[1];
+                round_key_key[2] += after_sbox[2];
+                round_key_key[3] += after_sbox[3];
+                for i in 1..4 {
+                    round_key_key[i * 4] += round_key_key[(i - 1) * 4];
+                    round_key_key[i * 4 + 1] += round_key_key[(i - 1) * 4 + 1];
+                    round_key_key[i * 4 + 2] += round_key_key[(i - 1) * 4 + 2];
+                    round_key_key[i * 4 + 3] += round_key_key[(i - 1) * 4 + 3];
+                }
+                self.round_key_keys.push(round_key_key);
+            }
+        }
 
         // prepare intermediate states
         (
@@ -458,6 +592,10 @@ where
         ) = {
             let mut keys = Vec::with_capacity(10);
             let mut l_keys = Vec::with_capacity(10);
+
+            // iterate through the keys in 128 bit chunks
+            let mut key_state_chunks_it = self.keys[128 + 32 * 10..].chunks_exact(128);
+            assert_eq!(key_state_chunks_it.len(), 10 + 1);
 
             for _ in 0..10 {
                 let key_chunk = key_state_chunks_it.next().unwrap();
@@ -481,6 +619,7 @@ where
     ) -> (
         GF2p128,
         GF2p128,
+        &[[GF2p128; 4]],
         &[[GF2p128; 16]],
         &[[GF2p128; 16]],
         &[[GF2p128; 16]],
@@ -488,6 +627,7 @@ where
         (
             self.global_key,
             self.mask_key,
+            &self.key_schedule_intermediate_state_keys,
             &self.round_key_keys,
             &self.intermediate_state_keys,
             &self.rotated_intermediate_state_keys,
@@ -502,7 +642,23 @@ where
         let Delta = self.global_key;
         let Delta_squared = Delta.square();
 
-        // TODO: key schedule conditions
+        // key schedule conditions
+        for key_schedule_round_i in 0..10 {
+            let inv_input_key = {
+                let round_key_key = self.round_key_keys[key_schedule_round_i];
+                [
+                    round_key_key[13],
+                    round_key_key[14],
+                    round_key_key[15],
+                    round_key_key[12],
+                ]
+            };
+            let inv_output_key = self.key_schedule_intermediate_state_keys[key_schedule_round_i];
+            for j in 0..4 {
+                let chi_k = GF2p128::random(&mut chi_rng);
+                B += chi_k * ((inv_input_key[j] * inv_output_key[j]) - Delta_squared);
+            }
+        }
 
         // first round
         {
@@ -612,7 +768,7 @@ where
         self.lift_commitments();
         let B = self.aggregates_conditions();
         let (A0, A1) = self.proof;
-        assert_eq!(B, A0 + A1 * self.global_key);
+        // assert_eq!(B, A0 + A1 * self.global_key);
         return B == A0 + A1 * self.global_key;
     }
 }
@@ -702,6 +858,7 @@ mod tests {
         {
             let (
                 (mask, mask_tag),
+                (key_schedule_intermediate_states, key_schedule_intermediate_state_tags),
                 (round_keys, round_key_tags),
                 (intermediate_states, intermediate_state_tags),
                 (rotated_intermediate_states, rotated_intermediate_state_tags),
@@ -709,11 +866,24 @@ mod tests {
             let (
                 global_key,
                 mask_key,
+                key_schedule_intermediate_state_keys,
                 round_key_keys,
                 intermediate_state_keys,
                 rotated_intermediate_state_keys,
             ) = verifier.get_lifted_commitments();
             assert_eq!(mask_tag, mask * global_key + mask_key);
+            for (is_i, is_t_i, is_k_i) in izip!(
+                key_schedule_intermediate_states.iter().copied(),
+                key_schedule_intermediate_state_tags.iter().copied(),
+                key_schedule_intermediate_state_keys.iter().copied(),
+            ) {
+                for j in 0..4 {
+                    assert_eq!(
+                        is_t_i[j],
+                        GF2p128::embed_gf2p8(is_i[j]) * global_key + is_k_i[j]
+                    );
+                }
+            }
             for (rk_i, rk_t_i, rk_k_i) in izip!(
                 round_keys.iter().copied(),
                 round_key_tags.iter().copied(),
