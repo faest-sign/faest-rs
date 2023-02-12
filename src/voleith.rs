@@ -8,7 +8,8 @@ use digest::XofReader;
 use ff::Field;
 use itertools::izip;
 use ndarray::{s, Array1, Array2, ArrayView1, ArrayView2, Axis};
-use rand::thread_rng;
+use rand::{thread_rng, Rng, SeedableRng};
+use rand_chacha::ChaChaRng;
 // use blake3::{Hash as Blake3Hash, Hasher as Blake3Hasher};
 
 type Vector<T> = Array1<T>;
@@ -46,8 +47,12 @@ pub trait VoleInTheHeadReceiver {
     fn new(vole_length: usize, num_repetitions: usize) -> Self;
     fn receive_commitment(&mut self, commitment: Self::Commitment);
     fn receive_random_commitment(&mut self, commitment: Self::Commitment);
+    fn consistency_challenge_from_seed(num_repetitions: usize, seed: [u8; 32]) -> Self::Challenge;
+    fn generate_consistency_challenge_from_seed(&mut self, seed: [u8; 32]) -> Self::Challenge;
     fn generate_consistency_challenge(&mut self) -> Self::Challenge;
     fn store_consistency_response(&mut self, consistency_response: Self::Response);
+    fn final_challenge_from_seed(num_repetitions: usize, seed: [u8; 32]) -> Vector<Self::Field>;
+    fn generate_final_challenge_from_seed(&mut self, seed: [u8; 32]) -> Vector<Self::Field>;
     fn generate_final_challenge(&mut self) -> Vector<Self::Field>;
     fn receive_decommitment(&mut self, decommitments: &Self::Decommitment) -> bool;
     fn get_output(&self) -> (VectorView<'_, Self::Field>, MatrixView<'_, Self::Field>);
@@ -331,13 +336,23 @@ impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
         self.state = VoleInTheHeadReceiverState::CommitmentReceived;
     }
 
-    fn generate_consistency_challenge(&mut self) -> GF2p8Vector {
+    fn consistency_challenge_from_seed(num_repetitions: usize, seed: [u8; 32]) -> GF2p8Vector {
+        let mut rng = ChaChaRng::from_seed(seed);
+        (0..num_repetitions)
+            .map(|_| GF2p8::random(&mut rng))
+            .collect()
+    }
+
+    fn generate_consistency_challenge_from_seed(&mut self, seed: [u8; 32]) -> GF2p8Vector {
         assert_eq!(self.state, VoleInTheHeadReceiverState::CommitmentReceived);
-        self.consistency_challenges = (0..self.num_repetitions)
-            .map(|_| GF2p8::random(thread_rng()))
-            .collect();
+        self.consistency_challenges =
+            Self::consistency_challenge_from_seed(self.num_repetitions, seed);
         self.state = VoleInTheHeadReceiverState::ConsistencyChallengeGenerated;
         self.consistency_challenges.clone()
+    }
+
+    fn generate_consistency_challenge(&mut self) -> GF2p8Vector {
+        self.generate_consistency_challenge_from_seed(thread_rng().gen())
     }
 
     fn store_consistency_response(&mut self, consistency_response: (GF2p8Vector, GF2p8Matrix)) {
@@ -349,16 +364,25 @@ impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
         self.state = VoleInTheHeadReceiverState::ConsistencyChallengeResponseReceived;
     }
 
-    fn generate_final_challenge(&mut self) -> GF2p8Vector {
+    fn final_challenge_from_seed(num_repetitions: usize, seed: [u8; 32]) -> GF2p8Vector {
+        let mut rng = ChaChaRng::from_seed(seed);
+        (0..num_repetitions)
+            .map(|_| GF2p8::random(&mut rng))
+            .collect()
+    }
+
+    fn generate_final_challenge_from_seed(&mut self, seed: [u8; 32]) -> GF2p8Vector {
         assert_eq!(
             self.state,
             VoleInTheHeadReceiverState::ConsistencyChallengeResponseReceived
         );
-        self.final_challenges = (0..self.num_repetitions)
-            .map(|_| GF2p8::random(thread_rng()))
-            .collect();
+        self.final_challenges = Self::final_challenge_from_seed(self.num_repetitions, seed);
         self.state = VoleInTheHeadReceiverState::FinalChallengeGenerated;
         self.final_challenges.clone()
+    }
+
+    fn generate_final_challenge(&mut self) -> GF2p8Vector {
+        self.generate_final_challenge_from_seed(thread_rng().gen())
     }
 
     fn receive_decommitment(&mut self, decommitments: &Vec<VC::Decommitment>) -> bool {

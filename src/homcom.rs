@@ -31,8 +31,16 @@ pub trait HomComReceiver {
     type Decommitment;
 
     fn new(num_bit_commitments: usize) -> Self;
+    fn generate_challenge_from_seed(seed: [u8; 32]) -> Self::Challenge;
+    fn commit_send_challenge_from_seed(
+        &mut self,
+        cons_commitment: Self::Commitment,
+        seed: [u8; 32],
+    ) -> Self::Challenge;
     fn commit_send_challenge(&mut self, cons_commitment: Self::Commitment) -> Self::Challenge;
     fn commit_receive_response(&mut self, cons_response: Self::Response);
+    fn generate_choice_from_seed(seed: [u8; 32]) -> Self::Choice;
+    fn choose_from_seed(&mut self, seed: [u8; 32]) -> Self::Choice;
     fn choose(&mut self) -> Self::Choice;
     fn receive(
         &mut self,
@@ -111,6 +119,20 @@ where
         }
     }
 
+    fn generate_challenge_from_seed(seed: [u8; 32]) -> Self::Challenge {
+        VitHR::consistency_challenge_from_seed(VitHR::Field::VECTOR_SIZE, seed)
+    }
+
+    fn commit_send_challenge_from_seed(
+        &mut self,
+        cons_commitment: Self::Commitment,
+        seed: [u8; 32],
+    ) -> Self::Challenge {
+        self.vith_receiver.receive_commitment(cons_commitment);
+        self.vith_receiver
+            .generate_consistency_challenge_from_seed(seed)
+    }
+
     fn commit_send_challenge(&mut self, cons_commitment: Self::Commitment) -> Self::Challenge {
         self.vith_receiver.receive_commitment(cons_commitment);
         self.vith_receiver.generate_consistency_challenge()
@@ -118,6 +140,14 @@ where
 
     fn commit_receive_response(&mut self, cons_response: Self::Response) {
         self.vith_receiver.store_consistency_response(cons_response)
+    }
+
+    fn generate_choice_from_seed(seed: [u8; 32]) -> Self::Choice {
+        VitHR::final_challenge_from_seed(VitHR::Field::VECTOR_SIZE, seed)
+    }
+
+    fn choose_from_seed(&mut self, seed: [u8; 32]) -> Self::Choice {
+        self.vith_receiver.generate_final_challenge_from_seed(seed)
     }
 
     fn choose(&mut self) -> Self::Choice {
