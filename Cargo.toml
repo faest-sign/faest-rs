@@ -17,3 +17,10 @@ num-traits = "0.2.15"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 subtle = "2.4.1"
+
+[dev-dependencies]
+criterion = "0.4.0"
+
+[[bench]]
+name = "faest"
+harness = false
