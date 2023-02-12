@@ -1,4 +1,4 @@
-use crate::aes::{Aes, EXTENDED_WITNESS_BYTE_SIZE, ROUND_CONSTANTS};
+use crate::aes::{Aes, AesState, KeyExpansion, EXTENDED_WITNESS_BYTE_SIZE, ROUND_CONSTANTS};
 use crate::field::{BytesRepr, GF2p128, GF2p8, InnerProduct};
 use crate::homcom::{HomComReceiver, HomComSender};
 use bitvec::vec::BitVec;
@@ -6,15 +6,43 @@ use ff::Field;
 use rand::{thread_rng, Rng, SeedableRng};
 use rand_chacha::ChaChaRng;
 
-type GF2Vector = BitVec<u8>;
-
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SecretKey {
     pub key: [u8; 16],
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PublicKey {
     pub input: [u8; 16],
     pub output: [u8; 16],
 }
+
+pub fn keygen() -> (SecretKey, PublicKey) {
+    let mut rng = thread_rng();
+
+    loop {
+        let key: [u8; 16] = rng.gen();
+        let input: [u8; 16] = rng.gen();
+        let (round_keys, inv_outs) =
+            KeyExpansion::expand_and_collect_inv_outputs_128(key.map(Into::into));
+        if inv_outs.iter().any(|x| x.iter().any(|y| y.0 == 0)) {
+            continue;
+        }
+        let (output, inv_outs) = AesState::from(input).encrypt_and_collect_inv_outputs(round_keys);
+        if inv_outs.iter().any(|x| x.0.iter().any(|y| y.0 == 0)) {
+            continue;
+        }
+        return (
+            SecretKey { key },
+            PublicKey {
+                input,
+                output: output.0.map(Into::into),
+            },
+        );
+    }
+}
+
+type GF2Vector = BitVec<u8>;
 
 const _NUM_CONSTRAINTS: usize = 42;
 

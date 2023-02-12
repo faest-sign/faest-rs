@@ -1,4 +1,4 @@
-pub mod aes;
+mod aes;
 mod arithmetic;
 mod common;
 pub mod faest;

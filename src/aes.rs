@@ -30,15 +30,21 @@ impl Aes {
 
         let (round_keys, inv_outputs) =
             KeyExpansion::expand_and_collect_inv_outputs_128(key.map(GF2p8));
+        if inv_outputs
+            .iter()
+            .any(|x| x.iter().any(|y| *y == GF2p8::ZERO))
+        {
+            return None;
+        }
         buf.extend(&key);
         buf.extend(inv_outputs.iter().flatten().copied().map(Into::<u8>::into));
         assert_eq!(buf.len(), 16 + 10 * 4);
 
         let input_state = AesState(input.map(GF2p8));
         let (output_state, inv_outputs) = input_state.encrypt_and_collect_inv_outputs(round_keys);
-        if !inv_outputs
+        if inv_outputs
             .iter()
-            .all(|x| x.0.iter().all(|y| *y != GF2p8::ZERO))
+            .any(|x| x.0.iter().any(|y| *y == GF2p8::ZERO))
         {
             return None;
         }
@@ -263,10 +269,6 @@ impl KeyExpansion {
             AesState::sbox_add_single(AesState::sbox_rotations_single(inv_out[3])),
         ];
         (out, inv_out)
-    }
-
-    pub fn expand_128(key: [GF2p8; 16]) -> [[GF2p8; 16]; 11] {
-        Self::expand_and_collect_inv_outputs_128(key).0
     }
 
     pub fn expand_and_collect_inv_outputs_128(
