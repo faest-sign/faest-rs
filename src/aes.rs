@@ -547,7 +547,7 @@ mod tests {
                 F(0xa6),
             ],
         ];
-        let expanded_key = KeyExpansion::expand_128(key);
+        let (expanded_key, _) = KeyExpansion::expand_and_collect_inv_outputs_128(key);
         for i in 0..11 {
             assert_eq!(
                 expanded_key[i], expected_round_keys[i],
@@ -613,7 +613,7 @@ mod tests {
             F(0x5a),
         ];
         let state = AesState::from(input_block);
-        let round_keys = KeyExpansion::expand_128(key);
+        let (round_keys, _) = KeyExpansion::expand_and_collect_inv_outputs_128(key);
         let output_block = state.encrypt(round_keys);
         assert_eq!(output_block.0, expected_output_block);
     }
