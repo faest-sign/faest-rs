@@ -42,30 +42,47 @@ pub fn keygen() -> (SecretKey, PublicKey) {
     }
 }
 
-type GF2Vector = BitVec<u8>;
+pub trait Prover {
+    type Commitment;
+    type Challenge1;
+    type Response;
+    type Challenge2;
+    type Proof;
+    type Choice;
+    type Decommitment;
 
-const _NUM_CONSTRAINTS: usize = 42;
-
-pub struct FaestProver<HCS>
-where
-    HCS: HomComSender,
-{
-    secret_key: SecretKey,
-    public_key: PublicKey,
-    hc_sender: HCS,
-    witness: GF2Vector,
-    tags: Vec<GF2p128>,
-    mask: GF2p128,
-    mask_tag: GF2p128,
-    key_schedule_intermediate_states: Vec<[GF2p8; 4]>,
-    key_schedule_intermediate_state_tags: Vec<[GF2p128; 4]>,
-    round_keys: Vec<[GF2p8; 16]>,
-    round_key_tags: Vec<[GF2p128; 16]>,
-    intermediate_states: Vec<[GF2p8; 16]>,
-    intermediate_state_tags: Vec<[GF2p128; 16]>,
-    rotated_intermediate_states: Vec<[GF2p8; 16]>,
-    rotated_intermediate_state_tags: Vec<[GF2p128; 16]>,
+    fn new(secret_key: SecretKey, public_key: PublicKey) -> Self;
+    fn commit(&mut self) -> Self::Commitment;
+    fn commit_prove_consistency(&mut self, challenge: Self::Challenge1) -> Self::Response;
+    fn prove(&mut self, challenge: Self::Challenge2) -> Self::Proof;
+    fn transfer(&mut self, choice: Self::Choice) -> Self::Decommitment;
 }
+
+pub trait Verifier {
+    type Commitment;
+    type Challenge1;
+    type Response;
+    type Challenge2;
+    type Proof;
+    type Choice;
+    type Decommitment;
+    fn new(public_key: PublicKey) -> Self;
+    fn generate_commit_challenge_from_seed(seed: [u8; 32]) -> Self::Challenge1;
+    fn commit_send_challenge_from_seed(
+        &mut self,
+        commitment: Self::Commitment,
+        seed: [u8; 32],
+    ) -> Self::Challenge1;
+    fn commit_send_challenge(&mut self, commitment: Self::Commitment) -> Self::Challenge1;
+    fn commit_receive_response(&mut self, response: Self::Response);
+    fn generate_challenge_from_seed(seed: [u8; 32]) -> Self::Challenge2;
+    fn send_challenge_from_seed(&mut self, seed: [u8; 32]) -> Self::Challenge2;
+    fn send_challenge(&mut self) -> Self::Challenge2;
+    fn choose(&mut self, proof: Self::Proof) -> Self::Choice;
+    fn verify(&mut self, decommitment: Self::Decommitment) -> bool;
+}
+
+type GF2Vector = BitVec<u8>;
 
 fn rotate_gf2p8(x: GF2p8) -> GF2p8 {
     x + x.rotate_left(1) + x.rotate_left(2) + x.rotate_left(3) + x.rotate_left(4)
@@ -86,11 +103,40 @@ fn lift_into_rotated_gf2p8_subfield(tags: &[GF2p128]) -> GF2p128 {
     InnerProduct::inner_product(rotated_tags.iter(), GF2p128::GF2P8_EMBEDDING_POX.iter())
 }
 
-impl<HCS> FaestProver<HCS>
+pub struct FaestProverFromHC<HCS>
+where
+    HCS: HomComSender,
+{
+    secret_key: SecretKey,
+    public_key: PublicKey,
+    hc_sender: HCS,
+    witness: GF2Vector,
+    tags: Vec<GF2p128>,
+    mask: GF2p128,
+    mask_tag: GF2p128,
+    key_schedule_intermediate_states: Vec<[GF2p8; 4]>,
+    key_schedule_intermediate_state_tags: Vec<[GF2p128; 4]>,
+    round_keys: Vec<[GF2p8; 16]>,
+    round_key_tags: Vec<[GF2p128; 16]>,
+    intermediate_states: Vec<[GF2p8; 16]>,
+    intermediate_state_tags: Vec<[GF2p128; 16]>,
+    rotated_intermediate_states: Vec<[GF2p8; 16]>,
+    rotated_intermediate_state_tags: Vec<[GF2p128; 16]>,
+}
+
+impl<HCS> Prover for FaestProverFromHC<HCS>
 where
     HCS: HomComSender<Tag = GF2p128>,
 {
-    pub fn new(secret_key: SecretKey, public_key: PublicKey) -> Self {
+    type Commitment = HCS::Commitment;
+    type Challenge1 = HCS::Challenge;
+    type Response = HCS::Response;
+    type Challenge2 = [u8; 32];
+    type Proof = (GF2p128, GF2p128);
+    type Choice = HCS::Choice;
+    type Decommitment = HCS::Decommitment;
+
+    fn new(secret_key: SecretKey, public_key: PublicKey) -> Self {
         Self {
             secret_key,
             public_key,
@@ -110,7 +156,7 @@ where
         }
     }
 
-    pub fn commit(&mut self) -> HCS::Commitment {
+    fn commit(&mut self) -> HCS::Commitment {
         let witness = Aes::compute_extended_witness(self.secret_key.key, self.public_key.input);
 
         assert!(witness.is_some());
@@ -125,10 +171,24 @@ where
         commitment
     }
 
-    pub fn commit_prove_consistency(&mut self, challenge: HCS::Challenge) -> HCS::Response {
+    fn commit_prove_consistency(&mut self, challenge: HCS::Challenge) -> HCS::Response {
         self.hc_sender.commit_prove_consistency(challenge)
     }
 
+    fn prove(&mut self, challenge_seed: [u8; 32]) -> (GF2p128, GF2p128) {
+        self.lift_commitments();
+        self.aggregates_conditions(challenge_seed)
+    }
+
+    fn transfer(&mut self, choice: HCS::Choice) -> HCS::Decommitment {
+        self.hc_sender.transfer(choice)
+    }
+}
+
+impl<HCS> FaestProverFromHC<HCS>
+where
+    HCS: HomComSender<Tag = GF2p128>,
+{
     fn lift_commitments(&mut self) {
         let witness_bytes = self.witness.as_raw_slice();
         assert_eq!(witness_bytes.len(), EXTENDED_WITNESS_BYTE_SIZE + 16);
@@ -485,18 +545,9 @@ where
 
         (A0, A1)
     }
-
-    pub fn prove(&mut self, challenge_seed: [u8; 32]) -> (GF2p128, GF2p128) {
-        self.lift_commitments();
-        self.aggregates_conditions(challenge_seed)
-    }
-
-    pub fn transfer(&mut self, choice: HCS::Choice) -> HCS::Decommitment {
-        self.hc_sender.transfer(choice)
-    }
 }
 
-pub struct FaestVerifier<HCR>
+pub struct FaestVerifierFromHC<HCR>
 where
     HCR: HomComReceiver,
 {
@@ -513,11 +564,19 @@ where
     rotated_intermediate_state_keys: Vec<[GF2p128; 16]>,
 }
 
-impl<HCR> FaestVerifier<HCR>
+impl<HCR> Verifier for FaestVerifierFromHC<HCR>
 where
     HCR: HomComReceiver<GlobalKey = GF2p128, Key = GF2p128>,
 {
-    pub fn new(public_key: PublicKey) -> Self {
+    type Commitment = HCR::Commitment;
+    type Challenge1 = HCR::Challenge;
+    type Response = HCR::Response;
+    type Challenge2 = [u8; 32];
+    type Proof = (GF2p128, GF2p128);
+    type Choice = HCR::Choice;
+    type Decommitment = HCR::Decommitment;
+
+    fn new(public_key: PublicKey) -> Self {
         Self {
             public_key,
             hc_receiver: HCR::new(EXTENDED_WITNESS_BYTE_SIZE * 8 + 128),
@@ -533,24 +592,66 @@ where
         }
     }
 
-    pub fn commit_send_challenge(&mut self, commitment: HCR::Commitment) -> HCR::Challenge {
+    fn generate_commit_challenge_from_seed(seed: [u8; 32]) -> HCR::Challenge {
+        HCR::generate_challenge_from_seed(seed)
+    }
+
+    fn commit_send_challenge_from_seed(
+        &mut self,
+        commitment: HCR::Commitment,
+        seed: [u8; 32],
+    ) -> HCR::Challenge {
+        self.hc_receiver
+            .commit_send_challenge_from_seed(commitment, seed)
+    }
+
+    fn commit_send_challenge(&mut self, commitment: HCR::Commitment) -> HCR::Challenge {
         self.hc_receiver.commit_send_challenge(commitment)
     }
 
-    pub fn commit_receive_response(&mut self, response: HCR::Response) {
+    fn commit_receive_response(&mut self, response: HCR::Response) {
         self.hc_receiver.commit_receive_response(response);
     }
 
-    pub fn send_challenge(&mut self) -> [u8; 32] {
+    fn generate_challenge_from_seed(seed: [u8; 32]) -> [u8; 32] {
+        seed
+    }
+
+    fn send_challenge_from_seed(&mut self, seed: [u8; 32]) -> [u8; 32] {
+        self.chi_seed = seed;
+        seed
+    }
+
+    fn send_challenge(&mut self) -> [u8; 32] {
         self.chi_seed = thread_rng().gen();
         self.chi_seed
     }
 
-    pub fn choose(&mut self, proof: (GF2p128, GF2p128)) -> HCR::Choice {
+    fn choose(&mut self, proof: (GF2p128, GF2p128)) -> HCR::Choice {
         self.proof = proof;
         self.hc_receiver.choose()
     }
 
+    #[allow(non_snake_case)]
+    fn verify(&mut self, decommitment: HCR::Decommitment) -> bool {
+        if let Some((global_key, keys)) = self.hc_receiver.receive(decommitment) {
+            self.global_key = global_key;
+            self.keys = keys;
+        } else {
+            return false;
+        }
+        self.lift_commitments();
+        let B = self.aggregates_conditions();
+        let (A0, A1) = self.proof;
+        // assert_eq!(B, A0 + A1 * self.global_key);
+        return B == A0 + A1 * self.global_key;
+    }
+}
+
+impl<HCR> FaestVerifierFromHC<HCR>
+where
+    HCR: HomComReceiver<GlobalKey = GF2p128, Key = GF2p128>,
+{
     #[allow(non_snake_case)]
     fn lift_commitments(&mut self) {
         // prepare uniform mask
@@ -813,8 +914,9 @@ mod tests {
     use itertools::izip;
 
     type VC = GgmVecCom<Block128, Aes128CtrLdPrg, blake3::Hasher, Blake3LE<Block128>>;
-    type Prover = FaestProver<HomCom128SenderFromVitH<VoleInTheHeadSenderFromVC<VC>>>;
-    type Verifier = FaestVerifier<HomCom128ReceiverFromVitH<VoleInTheHeadReceiverFromVC<VC>>>;
+    type FaestProver = FaestProverFromHC<HomCom128SenderFromVitH<VoleInTheHeadSenderFromVC<VC>>>;
+    type FaestVerifier =
+        FaestVerifierFromHC<HomCom128ReceiverFromVitH<VoleInTheHeadReceiverFromVC<VC>>>;
 
     const SECRET_KEY: SecretKey = SecretKey {
         key: [
@@ -868,8 +970,8 @@ mod tests {
 
     #[test]
     fn test_correctness() {
-        let mut prover = Prover::new(SECRET_KEY, PUBLIC_KEY);
-        let mut verifier = Verifier::new(PUBLIC_KEY);
+        let mut prover = FaestProver::new(SECRET_KEY, PUBLIC_KEY);
+        let mut verifier = FaestVerifier::new(PUBLIC_KEY);
 
         let commitment = prover.commit();
         let challenge = verifier.commit_send_challenge(commitment);

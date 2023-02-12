@@ -19,8 +19,9 @@ type VC = veccom::GgmVecCom<
     blake3::Hasher,
     primitives::Blake3LE<common::Block128>,
 >;
-pub type FaestProver =
-    faest::FaestProver<homcom::HomCom128SenderFromVitH<voleith::VoleInTheHeadSenderFromVC<VC>>>;
-pub type FaestVerifier = faest::FaestVerifier<
+pub type FaestProver = faest::FaestProverFromHC<
+    homcom::HomCom128SenderFromVitH<voleith::VoleInTheHeadSenderFromVC<VC>>,
+>;
+pub type FaestVerifier = faest::FaestVerifierFromHC<
     homcom::HomCom128ReceiverFromVitH<voleith::VoleInTheHeadReceiverFromVC<VC>>,
 >;
