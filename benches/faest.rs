@@ -43,8 +43,8 @@ pub fn bench_faest_sign(c: &mut Criterion) {
     });
 }
 
-pub fn bench_faest_signature_verify(c: &mut Criterion) {
-    c.bench_function("faest_signature_verify", |b| {
+pub fn bench_faest_verify_signature(c: &mut Criterion) {
+    c.bench_function("faest_verify_signature", |b| {
         let message = "I see a ship in the harbor";
         let (secret_key, public_key) = keygen();
         let signer = FaestSigner::new(secret_key, public_key);
@@ -62,6 +62,6 @@ criterion_group!(
     bench_keygen,
     bench_faest_interactive,
     bench_faest_sign,
-    bench_faest_signature_verify
+    bench_faest_verify_signature
 );
 criterion_main!(benches);
