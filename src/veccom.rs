@@ -5,9 +5,9 @@ use digest::{Digest, Output as DigestOutput, XofReader};
 use rand::thread_rng;
 
 pub trait VecCom {
-    type Commitment: AsRef<[u8]>;
+    type Commitment: Clone + AsRef<[u8]>;
     type DecommitmentKey: Copy;
-    type Decommitment;
+    type Decommitment: Clone;
     type XofReader: XofReader;
     fn commit(
         log_num_messages: u32,
@@ -29,6 +29,53 @@ pub trait VecCom {
     ) -> Option<Vec<Self::XofReader>>;
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Commitment<H: Digest> {
+    hash: DigestOutput<H>,
+}
+
+impl<H: Digest> From<DigestOutput<H>> for Commitment<H> {
+    fn from(hash: DigestOutput<H>) -> Self {
+        Self { hash }
+    }
+}
+
+impl<H: Digest> Into<DigestOutput<H>> for &Commitment<H> {
+    fn into(self) -> DigestOutput<H> {
+        self.hash.clone()
+    }
+}
+
+impl<H: Digest> Into<DigestOutput<H>> for Commitment<H> {
+    fn into(self) -> DigestOutput<H> {
+        self.hash
+    }
+}
+
+impl<H: Digest> Clone for Commitment<H> {
+    fn clone(&self) -> Self {
+        Self {
+            hash: self.hash.clone(),
+        }
+    }
+}
+
+impl<H: Digest> AsRef<[u8]> for Commitment<H> {
+    fn as_ref(&self) -> &[u8] {
+        &self.hash
+    }
+}
+
+impl<H: Digest> bincode::Encode for Commitment<H> {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> core::result::Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&self.hash.as_slice(), encoder)?;
+        Ok(())
+    }
+}
+
 pub struct GgmVecCom<B, Prg, H, LE>
 where
     B: Block,
@@ -44,17 +91,23 @@ where
 
 impl<B, Prg, H, LE> VecCom for GgmVecCom<B, Prg, H, LE>
 where
-    B: Block,
+    B: Block + bincode::Encode,
     Prg: LengthDoubling<Block = B>,
     H: Digest,
     LE: LeafExpander<Com = B>,
 {
-    type Commitment = DigestOutput<H>;
+    type Commitment = Commitment<H>;
     type DecommitmentKey = B;
     type Decommitment = (Vec<B>, B);
     type XofReader = LE::XofR;
 
-    fn commit(log_num_messages: u32) -> (DigestOutput<H>, B, Vec<Self::XofReader>) {
+    fn commit(
+        log_num_messages: u32,
+    ) -> (
+        Self::Commitment,
+        Self::DecommitmentKey,
+        Vec<Self::XofReader>,
+    ) {
         let num_messages = 1usize << log_num_messages;
         let tree_height = log_num_messages;
 
@@ -77,11 +130,12 @@ where
                 xofs.push(xof_j);
             });
             hasher.finalize()
-        };
+        }
+        .into();
         (commitment, decommitment_key, xofs)
     }
 
-    fn decommit(log_num_messages: u32, decommitment_key: B, index: usize) -> (Vec<B>, B) {
+    fn decommit(log_num_messages: u32, decommitment_key: B, index: usize) -> Self::Decommitment {
         let num_messages = 1usize << log_num_messages;
         let tree_height = log_num_messages as usize;
         assert!(index < num_messages);
@@ -105,10 +159,10 @@ where
 
     fn verify(
         log_num_messages: u32,
-        commitment: &DigestOutput<H>,
-        decommitment: &(Vec<B>, B),
+        commitment: &Self::Commitment,
+        decommitment: &Self::Decommitment,
         index: usize,
-    ) -> Option<Vec<LE::XofR>> {
+    ) -> Option<Vec<Self::XofReader>> {
         let num_messages = 1usize << log_num_messages;
         let tree_height = log_num_messages as usize;
         assert!(index < num_messages);
@@ -148,7 +202,7 @@ where
             hasher.finalize()
         };
 
-        if recomputed_commitment == *commitment {
+        if recomputed_commitment == commitment.into() {
             Some(xofs)
         } else {
             None

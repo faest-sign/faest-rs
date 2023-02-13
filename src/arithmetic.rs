@@ -1,8 +1,6 @@
-use crate::field::GF2p8;
-use bitvec::slice::BitSlice;
+use crate::field::{GF2View, GF2p8};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 
-type GF2View = BitSlice<u8>;
 type GF2p8Vector = Array1<GF2p8>;
 type GF2p8VectorView<'a> = ArrayView1<'a, GF2p8>;
 type GF2p8Matrix = Array2<GF2p8>;
@@ -57,6 +55,7 @@ pub fn hash_bitvector_and_matrix(
     v: &GF2View,
     M: GF2p8MatrixView,
 ) -> (GF2p8Vector, GF2p8Matrix) {
+    // TODO: optimize
     (hash_bitvector(r, v), hash_matrix(r, M))
 }
 
@@ -64,8 +63,7 @@ pub fn hash_bitvector_and_matrix(
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
-    use bitvec::vec::BitVec;
-    type GF2Vector = BitVec<u8>;
+    use crate::field::GF2Vector;
 
     #[test]
     fn test_hash() {
@@ -82,7 +80,9 @@ mod tests {
             GF2p8(0x48),
             GF2p8(0x86),
         ]);
-        let v: GF2Vector = [true, true, false, false, true].iter().collect();
+        let v = GF2Vector {
+            bits: [true, true, false, false, true].iter().collect(),
+        };
         let M = GF2p8Matrix::from_shape_vec(
             (n, m),
             vec![
@@ -141,9 +141,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hash_matrix((&r).into(), (&M).into()), RM);
-        assert_eq!(hash_bitvector((&r).into(), &v), Rv);
+        assert_eq!(hash_bitvector((&r).into(), v.as_ref()), Rv);
         assert_eq!(
-            hash_bitvector_and_matrix((&r).into(), &v, (&M).into()),
+            hash_bitvector_and_matrix((&r).into(), v.as_ref(), (&M).into()),
             (Rv, RM)
         );
     }

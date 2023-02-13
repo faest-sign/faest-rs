@@ -1,10 +1,10 @@
 use crate::arithmetic::{hash_bitvector_and_matrix, hash_matrix};
-use crate::field::GF2p8;
+use crate::field::{GF2Vector, GF2View, GF2p8};
 use crate::veccom::VecCom;
-use bitvec::{slice::BitSlice, vec::BitVec};
 use core::marker::PhantomData;
 use core::mem;
 use digest::XofReader;
+use digest::{Digest, Output as DigestOutput};
 use ff::Field;
 use itertools::izip;
 use ndarray::{s, Array1, Array2, ArrayView1, ArrayView2, Axis};
@@ -14,15 +14,14 @@ use rand_chacha::ChaChaRng;
 
 type Vector<T> = Array1<T>;
 type VectorView<'a, T> = ArrayView1<'a, T>;
-type Matrix<T> = Array2<T>;
 type MatrixView<'a, T> = ArrayView2<'a, T>;
 
 pub trait VoleInTheHeadSender {
-    type Commitment;
-    type Challenge;
-    type Response;
-    type Decommitment;
-    type Field;
+    type Commitment: Clone;
+    type Challenge: Clone;
+    type Response: Clone;
+    type Decommitment: Clone;
+    type Field: Clone;
 
     const FIELD_SIZE: usize;
 
@@ -36,11 +35,11 @@ pub trait VoleInTheHeadSender {
 }
 
 pub trait VoleInTheHeadReceiver {
-    type Commitment;
-    type Challenge;
-    type Response;
-    type Decommitment;
-    type Field;
+    type Commitment: Clone;
+    type Challenge: Clone;
+    type Response: Clone;
+    type Decommitment: Clone;
+    type Field: Clone;
 
     const FIELD_SIZE: usize;
 
@@ -58,8 +57,6 @@ pub trait VoleInTheHeadReceiver {
     fn get_output(&self) -> (VectorView<'_, Self::Field>, MatrixView<'_, Self::Field>);
 }
 
-type GF2Vector = BitVec<u8>;
-type GF2View = BitSlice<u8>;
 type GF2p8Vector = Array1<GF2p8>;
 type GF2p8VectorView<'a> = ArrayView1<'a, GF2p8>;
 type GF2p8Matrix = Array2<GF2p8>;
@@ -74,17 +71,18 @@ enum VoleInTheHeadSenderState {
 }
 
 #[allow(non_snake_case)]
-pub struct VoleInTheHeadSenderFromVC<VC: VecCom> {
+pub struct VoleInTheHeadSenderFromVC<VC: VecCom, H: Digest = blake3::Hasher> {
     vole_length: usize,
     num_repetitions: usize,
     state: VoleInTheHeadSenderState,
     u: GF2Vector,
     V: GF2p8Matrix,
     decommitment_keys: Vec<VC::DecommitmentKey>,
-    _phantom_hc: PhantomData<VC>,
+    _phantom_vc: PhantomData<VC>,
+    _phantom_h: PhantomData<H>,
 }
 
-impl<VC: VecCom> VoleInTheHeadSenderFromVC<VC> {
+impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
     fn commit_impl(
         &mut self,
         message: Option<GF2Vector>,
@@ -108,15 +106,15 @@ impl<VC: VecCom> VoleInTheHeadSenderFromVC<VC> {
             commitments.push(commitment);
             // iteration x = 0
             let u_0 = &mut self.u;
-            xofs[0].read(u_0.as_raw_mut_slice());
+            xofs[0].read(u_0.bits.as_raw_mut_slice());
             let mut v_0 = self.V.row_mut(0);
             debug_assert_eq!(xofs.len(), 256);
             for (x, xof_x) in xofs.iter_mut().enumerate().skip(1) {
                 let mut r_x_0 = GF2Vector::with_capacity(ell_hat);
                 r_x_0.resize(ell_hat, false);
                 xof_x.read(r_x_0.as_raw_mut_slice());
-                *u_0 ^= &r_x_0;
-                for (i, b) in r_x_0.iter().enumerate() {
+                *u_0.bits ^= &r_x_0.bits;
+                for (i, b) in r_x_0.bits.iter().enumerate() {
                     if *b {
                         v_0[i] -= GF2p8(x as u8);
                     }
@@ -124,10 +122,10 @@ impl<VC: VecCom> VoleInTheHeadSenderFromVC<VC> {
             }
             if let Some(msg) = message {
                 let mut msg_correction = msg.clone();
-                msg_correction ^= &u_0[0..self.vole_length];
-                debug_assert_eq!(msg_correction.len(), self.vole_length);
+                msg_correction.bits ^= &u_0.bits[0..self.vole_length];
+                debug_assert_eq!(msg_correction.bits.len(), self.vole_length);
                 correction_values.push(msg_correction);
-                u_0[0..self.vole_length].copy_from_bitslice(&msg);
+                u_0.bits[0..self.vole_length].copy_from_bitslice(msg.as_ref());
             }
         }
 
@@ -150,14 +148,14 @@ impl<VC: VecCom> VoleInTheHeadSenderFromVC<VC> {
                 let mut r_x_i = GF2Vector::with_capacity(ell_hat);
                 r_x_i.resize(ell_hat, false);
                 xof_x.read(r_x_i.as_raw_mut_slice());
-                u_i ^= &r_x_i;
-                for (i, b) in r_x_i.iter().enumerate() {
+                u_i.bits ^= &r_x_i.bits;
+                for (i, b) in r_x_i.bits.iter().enumerate() {
                     if *b {
                         v_i[i] -= GF2p8(x as u8);
                     }
                 }
             }
-            u_i ^= &self.u;
+            u_i.bits ^= &self.u.bits;
             correction_values.push(u_i);
         }
 
@@ -180,11 +178,37 @@ impl<VC: VecCom> VoleInTheHeadSenderFromVC<VC> {
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Response<F, H: Digest> {
+    pub vector: Vector<F>,
+    pub hash: DigestOutput<H>,
+}
+
+impl<F: Clone, H: Digest> Clone for Response<F, H> {
+    fn clone(&self) -> Self {
+        Self {
+            vector: self.vector.clone(),
+            hash: self.hash.clone(),
+        }
+    }
+}
+
+impl<F: bincode::Encode, H: Digest> bincode::Encode for Response<F, H> {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> core::result::Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&self.hash.as_slice(), encoder)?;
+        bincode::Encode::encode(&self.vector.as_slice(), encoder)?;
+        Ok(())
+    }
+}
+
 #[allow(non_snake_case)]
-impl<VC: VecCom> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC> {
+impl<VC: VecCom, H: Digest> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC, H> {
     type Commitment = (Vec<VC::Commitment>, Vec<GF2Vector>);
     type Challenge = Vector<Self::Field>;
-    type Response = (Vector<Self::Field>, Matrix<Self::Field>);
+    type Response = Response<Self::Field, H>;
     type Decommitment = Vec<VC::Decommitment>;
     type Field = GF2p8;
 
@@ -199,7 +223,8 @@ impl<VC: VecCom> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC> {
             u: GF2Vector::new(),
             V: GF2p8Matrix::zeros((num_repetitions, ell_hat)),
             decommitment_keys: Vec::with_capacity(num_repetitions),
-            _phantom_hc: PhantomData,
+            _phantom_vc: PhantomData,
+            _phantom_h: PhantomData,
         };
         output.u.resize(ell_hat, false);
         output
@@ -213,22 +238,30 @@ impl<VC: VecCom> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC> {
         self.commit_impl(None)
     }
 
-    fn consistency_check_respond(
-        &mut self,
-        random_points: Vector<Self::Field>,
-    ) -> (Vector<Self::Field>, Matrix<Self::Field>) {
+    fn consistency_check_respond(&mut self, random_points: Vector<Self::Field>) -> Self::Response {
         assert_eq!(self.state, VoleInTheHeadSenderState::Committed);
         assert_eq!(random_points.len(), self.num_repetitions);
 
         let (u_tilde, V_tilde) =
-            hash_bitvector_and_matrix((&random_points).into(), &self.u, (&self.V).into());
+            hash_bitvector_and_matrix((&random_points).into(), self.u.as_ref(), (&self.V).into());
+        let V_tilde_hash = H::digest(
+            V_tilde
+                .as_slice()
+                .expect("not in standard memory order")
+                .iter()
+                .map(|x| x.0)
+                .collect::<Vec<u8>>(),
+        );
 
         // ignore the extra entries
         self.u.resize(self.vole_length, false);
         // cannot resize the matrix V, so keep in mind to ignore the last rows
 
         self.state = VoleInTheHeadSenderState::RespondedToConsistencyChallenge;
-        (u_tilde, V_tilde)
+        Self::Response {
+            vector: u_tilde,
+            hash: V_tilde_hash,
+        }
     }
 
     #[allow(non_snake_case)]
@@ -255,7 +288,7 @@ impl<VC: VecCom> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC> {
         let tau = self.num_repetitions;
         let ell = self.vole_length;
         assert_eq!(self.V.shape(), &[ell + tau, tau]);
-        (&self.u[..ell], self.V.slice(s![..ell, ..]))
+        (&self.u.as_ref()[..ell], self.V.slice(s![..ell, ..]))
     }
 }
 
@@ -271,7 +304,7 @@ enum VoleInTheHeadReceiverState {
 }
 
 #[allow(non_snake_case)]
-pub struct VoleInTheHeadReceiverFromVC<VC: VecCom> {
+pub struct VoleInTheHeadReceiverFromVC<VC: VecCom, H: Digest = blake3::Hasher> {
     vole_length: usize,
     num_repetitions: usize,
     state: VoleInTheHeadReceiverState,
@@ -281,18 +314,18 @@ pub struct VoleInTheHeadReceiverFromVC<VC: VecCom> {
     correction_values: Vec<GF2Vector>,
     consistency_challenges: GF2p8Vector,
     u_tilde: GF2p8Vector,
-    V_tilde: GF2p8Matrix,
+    V_tilde_hash: DigestOutput<H>,
     final_challenges: GF2p8Vector,
     W: GF2p8Matrix,
-    // decommitment_keys: Vec<VC::DecommitmentKey>,
-    _phantom_hc: PhantomData<VC>,
+    _phantom_vc: PhantomData<VC>,
+    _phantom_h: PhantomData<H>,
 }
 
 #[allow(non_snake_case)]
-impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
+impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC, H> {
     type Commitment = (Vec<VC::Commitment>, Vec<GF2Vector>);
     type Challenge = Vector<Self::Field>;
-    type Response = (Vector<Self::Field>, Matrix<Self::Field>);
+    type Response = Response<Self::Field, H>;
     type Decommitment = Vec<VC::Decommitment>;
     type Field = GF2p8;
 
@@ -309,10 +342,11 @@ impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
             correction_values: Vec::new(),
             consistency_challenges: Default::default(),
             u_tilde: Default::default(),
-            V_tilde: Default::default(),
+            V_tilde_hash: Default::default(),
             final_challenges: Default::default(),
             W: Default::default(),
-            _phantom_hc: PhantomData,
+            _phantom_vc: PhantomData,
+            _phantom_h: PhantomData,
         }
     }
 
@@ -355,12 +389,13 @@ impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
         self.generate_consistency_challenge_from_seed(thread_rng().gen())
     }
 
-    fn store_consistency_response(&mut self, consistency_response: (GF2p8Vector, GF2p8Matrix)) {
+    fn store_consistency_response(&mut self, consistency_response: Self::Response) {
         assert_eq!(
             self.state,
             VoleInTheHeadReceiverState::ConsistencyChallengeGenerated
         );
-        (self.u_tilde, self.V_tilde) = consistency_response;
+        self.u_tilde = consistency_response.vector;
+        self.V_tilde_hash = consistency_response.hash;
         self.state = VoleInTheHeadReceiverState::ConsistencyChallengeResponseReceived;
     }
 
@@ -418,7 +453,7 @@ impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
             for (x, xof_x) in xofs.iter_mut().enumerate() {
                 xof_x.read(r_x_i.as_raw_mut_slice());
                 let Delta_0_minus_x = Delta_0 - GF2p8(x as u8);
-                for (j, b) in r_x_i.iter().enumerate() {
+                for (j, b) in r_x_i.bits.iter().enumerate() {
                     if *b {
                         w_0[j] += Delta_0_minus_x;
                     }
@@ -428,7 +463,7 @@ impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
             if !self.random_commitment {
                 debug_assert_eq!(self.correction_values.len(), self.num_repetitions);
                 debug_assert_eq!(self.correction_values[0].len(), self.vole_length);
-                for (j, b) in self.correction_values[0].iter().enumerate() {
+                for (j, b) in self.correction_values[0].bits.iter().enumerate() {
                     if *b {
                         w_0[j] += Delta_0;
                     }
@@ -464,14 +499,14 @@ impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
             for (x, xof_x) in xofs.iter_mut().enumerate() {
                 xof_x.read(r_x_i.as_raw_mut_slice());
                 let Delta_i_minus_x = Delta_i - GF2p8(x as u8);
-                for (j, b) in r_x_i.iter().enumerate() {
+                for (j, b) in r_x_i.bits.iter().enumerate() {
                     if *b {
                         w_i[j] += Delta_i_minus_x;
                     }
                 }
             }
 
-            for (j, b) in correction_value_i.iter().enumerate() {
+            for (j, b) in correction_value_i.bits.iter().enumerate() {
                 if *b {
                     w_i[j] += Delta_i;
                 }
@@ -481,20 +516,23 @@ impl<VC: VecCom> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC> {
         // transpose W s.t. we can access it row-wise
         self.W = W.reversed_axes();
         self.W = self.W.as_standard_layout().to_owned();
-        let mut lhs = Default::default();
         let Deltas = &self.final_challenges;
         let u_tilde = &self.u_tilde;
-        mem::swap(&mut lhs, &mut self.V_tilde);
 
-        for (mut v_tilde_i, &u_tilde_i) in lhs.axis_iter_mut(Axis(0)).zip(u_tilde) {
-            v_tilde_i.scaled_add(u_tilde_i, Deltas);
+        // compute rhs = RW + [\tilde{u} * \Delta_1, ..., \tilde{u} * \Delta_\tau]
+        let mut rhs = hash_matrix((&self.consistency_challenges).into(), (&self.W).into());
+        for (mut rw_i, &u_tilde_i) in rhs.axis_iter_mut(Axis(0)).zip(u_tilde) {
+            rw_i.scaled_add(u_tilde_i, Deltas);
         }
-        // lhs is now \tilde{V] + [\tilde{u} * \Delta_1, ..., \tilde{u} * \Delta_\tau]
-
-        // compute rhs = RW
-        let rhs = hash_matrix((&self.consistency_challenges).into(), (&self.W).into());
-        assert_eq!(lhs, rhs);
-        if lhs == rhs {
+        let rw_hash = H::digest(
+            rhs.as_slice()
+                .expect("not in standard memory order")
+                .iter()
+                .map(|x| x.0)
+                .collect::<Vec<u8>>(),
+        );
+        assert_eq!(self.V_tilde_hash, rw_hash);
+        if self.V_tilde_hash == rw_hash {
             self.state = VoleInTheHeadReceiverState::Ready;
             true
         } else {
@@ -560,7 +598,7 @@ mod tests {
 
         let (u, V) = sender.get_output();
         if !RANDOM {
-            assert_eq!(u, messages);
+            assert_eq!(u, messages.as_ref());
         }
         let (Deltas, W) = receiver.get_output();
         assert_eq!(u.len(), vole_length);

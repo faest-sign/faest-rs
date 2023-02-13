@@ -1,7 +1,7 @@
 use crate::traits::Block;
 use rand::Rng;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, bincode::Encode)]
 pub struct Block128(pub [u8; 16]);
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Block256(pub [u8; 32]);

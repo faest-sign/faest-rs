@@ -1,7 +1,7 @@
 use crate::aes::{Aes, AesState, KeyExpansion, EXTENDED_WITNESS_BYTE_SIZE, ROUND_CONSTANTS};
+use crate::field::GF2Vector;
 use crate::field::{BytesRepr, GF2p128, GF2p8, InnerProduct};
 use crate::homcom::{HomComReceiver, HomComSender};
-use bitvec::vec::BitVec;
 use ff::Field;
 use rand::{thread_rng, Rng, SeedableRng};
 use rand_chacha::ChaChaRng;
@@ -11,7 +11,7 @@ pub struct SecretKey {
     pub key: [u8; 16],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bincode::Encode)]
 pub struct PublicKey {
     pub input: [u8; 16],
     pub output: [u8; 16],
@@ -43,13 +43,13 @@ pub fn keygen() -> (SecretKey, PublicKey) {
 }
 
 pub trait Prover {
-    type Commitment;
-    type Challenge1;
-    type Response;
-    type Challenge2;
-    type Proof;
-    type Choice;
-    type Decommitment;
+    type Commitment: Clone;
+    type Challenge1: Clone;
+    type Response: Clone;
+    type Challenge2: Clone;
+    type Proof: Clone;
+    type Choice: Clone;
+    type Decommitment: Clone;
 
     fn new(secret_key: SecretKey, public_key: PublicKey) -> Self;
     fn commit(&mut self) -> Self::Commitment;
@@ -59,13 +59,13 @@ pub trait Prover {
 }
 
 pub trait Verifier {
-    type Commitment;
-    type Challenge1;
-    type Response;
-    type Challenge2;
-    type Proof;
-    type Choice;
-    type Decommitment;
+    type Commitment: Clone;
+    type Challenge1: Clone;
+    type Response: Clone;
+    type Challenge2: Clone;
+    type Proof: Clone;
+    type Choice: Clone;
+    type Decommitment: Clone;
     fn new(public_key: PublicKey) -> Self;
     fn generate_commit_challenge_from_seed(seed: [u8; 32]) -> Self::Challenge1;
     fn commit_send_challenge_from_seed(
@@ -78,11 +78,11 @@ pub trait Verifier {
     fn generate_challenge_from_seed(seed: [u8; 32]) -> Self::Challenge2;
     fn send_challenge_from_seed(&mut self, seed: [u8; 32]) -> Self::Challenge2;
     fn send_challenge(&mut self) -> Self::Challenge2;
+    fn generate_choice_from_seed(seed: [u8; 32]) -> Self::Choice;
+    fn choose_from_seed(&mut self, proof: Self::Proof, seed: [u8; 32]) -> Self::Choice;
     fn choose(&mut self, proof: Self::Proof) -> Self::Choice;
     fn verify(&mut self, decommitment: Self::Decommitment) -> bool;
 }
-
-type GF2Vector = BitVec<u8>;
 
 fn rotate_gf2p8(x: GF2p8) -> GF2p8 {
     x + x.rotate_left(1) + x.rotate_left(2) + x.rotate_left(3) + x.rotate_left(4)
@@ -628,7 +628,16 @@ where
         self.chi_seed
     }
 
-    fn choose(&mut self, proof: (GF2p128, GF2p128)) -> HCR::Choice {
+    fn generate_choice_from_seed(seed: [u8; 32]) -> HCR::Choice {
+        HCR::generate_choice_from_seed(seed)
+    }
+
+    fn choose_from_seed(&mut self, proof: Self::Proof, seed: [u8; 32]) -> HCR::Choice {
+        self.proof = proof;
+        self.hc_receiver.choose_from_seed(seed)
+    }
+
+    fn choose(&mut self, proof: Self::Proof) -> HCR::Choice {
         self.proof = proof;
         self.hc_receiver.choose()
     }
@@ -896,7 +905,6 @@ mod tests {
     use crate::primitives::{Aes128CtrLdPrg, Blake3LE};
     use crate::veccom::GgmVecCom;
     use crate::voleith::{VoleInTheHeadReceiverFromVC, VoleInTheHeadSenderFromVC};
-    use blake3;
     use itertools::izip;
 
     type VC = GgmVecCom<Block128, Aes128CtrLdPrg, blake3::Hasher, Blake3LE<Block128>>;
@@ -929,6 +937,7 @@ mod tests {
         let u_bytes: Vec<u8> = (0..n).map(|_| thread_rng().gen()).collect();
         let u_bits = GF2Vector::from_vec(u_bytes);
         let u_as_gf2p128: Vec<GF2p128> = u_bits
+            .bits
             .iter()
             .by_vals()
             .map(|b| if b { GF2p128::ONE } else { GF2p128::ZERO })

@@ -2,6 +2,7 @@ mod aes;
 mod arithmetic;
 mod common;
 pub mod faest;
+pub mod fiat_shamir;
 pub mod field;
 pub mod homcom;
 mod primitives;
@@ -23,3 +24,7 @@ pub type FaestProver = faest::FaestProverFromHC<
 pub type FaestVerifier = faest::FaestVerifierFromHC<
     homcom::HomCom128ReceiverFromVitH<voleith::VoleInTheHeadReceiverFromVC<VC>>,
 >;
+
+pub type FaestSignature = fiat_shamir::FsSignature<FaestProver>;
+pub type FaestSigner = fiat_shamir::FsSigner<FaestProver, FaestVerifier>;
+pub type FaestSignatureVerifier = fiat_shamir::FsVerifier<FaestProver, FaestVerifier>;

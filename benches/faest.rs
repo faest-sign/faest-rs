@@ -1,6 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use homcomzk::faest::{Prover, Verifier};
-use homcomzk::{keygen, FaestProver, FaestVerifier};
+use homcomzk::fiat_shamir::{SignatureVerifier, Signer};
+use homcomzk::{keygen, FaestProver, FaestSignatureVerifier, FaestSigner, FaestVerifier};
 
 pub fn bench_keygen(c: &mut Criterion) {
     c.bench_function("keygen", |b| {
@@ -30,5 +31,37 @@ pub fn bench_faest_interactive(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_keygen, bench_faest_interactive);
+pub fn bench_faest_sign(c: &mut Criterion) {
+    c.bench_function("faest_sign", |b| {
+        let message = "I see a ship in the harbor";
+        let (secret_key, public_key) = keygen();
+        b.iter(|| {
+            let signer = FaestSigner::new(secret_key, public_key);
+            let signature = signer.sign(message.as_bytes());
+            black_box(signature);
+        });
+    });
+}
+
+pub fn bench_faest_signature_verify(c: &mut Criterion) {
+    c.bench_function("faest_signature_verify", |b| {
+        let message = "I see a ship in the harbor";
+        let (secret_key, public_key) = keygen();
+        let signer = FaestSigner::new(secret_key, public_key);
+        let signature = signer.sign(message.as_bytes());
+        b.iter(|| {
+            let verifier = FaestSignatureVerifier::new(public_key);
+            let result = verifier.verify(&signature, message.as_bytes());
+            black_box(result);
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_keygen,
+    bench_faest_interactive,
+    bench_faest_sign,
+    bench_faest_signature_verify
+);
 criterion_main!(benches);

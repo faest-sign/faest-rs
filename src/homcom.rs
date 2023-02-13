@@ -1,19 +1,17 @@
-use crate::field::{GF2p128, VecToGF2p128};
+use crate::field::{GF2Vector, GF2p128, VecToGF2p128};
 use crate::voleith::{VoleInTheHeadReceiver, VoleInTheHeadSender};
-use bitvec::vec::BitVec;
 use core::fmt;
 use ndarray::{Array1, Axis};
 
 type Vector<T> = Array1<T>;
-type GF2Vector = BitVec<u8>;
 
 pub trait HomComSender {
-    type Choice;
+    type Choice: Clone;
     type Tag;
-    type Commitment;
-    type Challenge;
-    type Response;
-    type Decommitment;
+    type Commitment: Clone;
+    type Challenge: Clone;
+    type Response: Clone;
+    type Decommitment: Clone;
 
     fn new(num_bit_commitments: usize) -> Self;
     fn commit_to_bits(&mut self, bits: GF2Vector) -> (Vec<Self::Tag>, Self::Commitment);
@@ -22,13 +20,13 @@ pub trait HomComSender {
 }
 
 pub trait HomComReceiver {
-    type Choice;
+    type Choice: Clone;
     type GlobalKey;
     type Key;
-    type Commitment;
-    type Challenge;
-    type Response;
-    type Decommitment;
+    type Commitment: Clone;
+    type Challenge: Clone;
+    type Response: Clone;
+    type Decommitment: Clone;
 
     fn new(num_bit_commitments: usize) -> Self;
     fn generate_challenge_from_seed(seed: [u8; 32]) -> Self::Challenge;
@@ -216,7 +214,7 @@ mod tests {
         assert_eq!(tags.len(), num_bits);
         assert_eq!(keys.len(), num_bits);
         for (b_i, key_i, tag_i) in izip!(
-            bits.iter().by_vals(),
+            bits.bits.iter().by_vals(),
             keys.iter().copied(),
             tags.iter().copied()
         ) {

@@ -1,3 +1,4 @@
+use bitvec::{slice::BitSlice, vec::BitVec};
 use core::fmt;
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -5,6 +6,94 @@ use ff::Field;
 use num_traits::identities::{One, Zero};
 use rand::{Rng, RngCore};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
+
+pub type GF2View = BitSlice<u8>;
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GF2Vector {
+    pub bits: BitVec<u8>,
+}
+
+impl GF2Vector {
+    pub fn new() -> Self {
+        Self {
+            bits: BitVec::new(),
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            bits: BitVec::with_capacity(capacity),
+        }
+    }
+
+    pub fn from_vec(vec: Vec<u8>) -> Self {
+        Self {
+            bits: BitVec::from_vec(vec),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.bits.len()
+    }
+
+    pub fn resize(&mut self, size: usize, value: bool) {
+        self.bits.resize(size, value)
+    }
+
+    pub fn as_raw_slice(&self) -> &[u8] {
+        self.bits.as_raw_slice()
+    }
+
+    pub fn as_raw_mut_slice(&mut self) -> &mut [u8] {
+        self.bits.as_raw_mut_slice()
+    }
+}
+
+impl From<BitVec<u8>> for GF2Vector {
+    fn from(bits: BitVec<u8>) -> Self {
+        Self { bits }
+    }
+}
+
+impl Into<BitVec<u8>> for GF2Vector {
+    fn into(self) -> BitVec<u8> {
+        self.bits
+    }
+}
+
+impl AsRef<BitSlice<u8>> for GF2Vector {
+    fn as_ref(&self) -> &BitSlice<u8> {
+        &self.bits
+    }
+}
+
+impl AsMut<BitSlice<u8>> for GF2Vector {
+    fn as_mut(&mut self) -> &mut BitSlice<u8> {
+        &mut self.bits
+    }
+}
+
+impl bincode::Encode for GF2Vector {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> core::result::Result<(), bincode::error::EncodeError> {
+        debug_assert_eq!(
+            {
+                let mut cpy = self.bits.clone();
+                cpy.force_align();
+                cpy.into_vec()
+            },
+            {
+                let cpy = self.bits.clone();
+                cpy.into_vec()
+            }
+        );
+        bincode::Encode::encode(&self.bits.len(), encoder)?;
+        bincode::Encode::encode(&self.bits.as_raw_slice(), encoder)?;
+        Ok(())
+    }
+}
 
 macro_rules! make_clmul {
     ($function_name:ident, $small_uint:ty, $large_uint:ty) => {
@@ -264,13 +353,13 @@ pub trait InnerProduct<A = Self> {
         J: Iterator<Item = A>;
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, bincode::Encode)]
 pub struct GF2p8(pub u8);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct UnreducedGF2p8(pub u16);
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, bincode::Encode)]
 pub struct GF2p128(pub [u64; 2]);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
