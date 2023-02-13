@@ -717,11 +717,9 @@ impl Field for GF2p128 {
         let mut x = *self;
         let mut y = Self::ONE;
         x = x.square();
-        for i in 0..126 {
+        for _ in 0..126 {
             y = x * y;
             x = x.square();
-            eprintln!("{i:3}: y = {y:?}");
-            eprintln!("{i:3}: x = {x:?}");
         }
         CtOption::new(x * y, !self.ct_eq(&Self::ZERO))
     }
