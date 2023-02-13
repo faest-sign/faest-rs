@@ -101,7 +101,7 @@ where
         let challenge1 = V::generate_commit_challenge_from_seed(h1.into());
         let response = self.prover.commit_prove_consistency(challenge1);
         let h2 = {
-            let mut hasher = blake3::Hasher::new_derive_key("FS-FAEST-2").chain_update(&h1);
+            let mut hasher = blake3::Hasher::new_derive_key("FS-FAEST-2").chain_update(h1);
             bincode::encode_into_std_write(&response, &mut hasher, bincode_cfg).unwrap();
             hasher.finalize()
         };
@@ -109,7 +109,7 @@ where
         let challenge2 = V::generate_challenge_from_seed(h2.into());
         let proof = self.prover.prove(challenge2);
         let h3 = {
-            let mut hasher = blake3::Hasher::new_derive_key("FS-FAEST-3").chain_update(&h2);
+            let mut hasher = blake3::Hasher::new_derive_key("FS-FAEST-3").chain_update(h2);
             bincode::encode_into_std_write(&proof, &mut hasher, bincode_cfg).unwrap();
             hasher.finalize()
         };
@@ -175,7 +175,7 @@ where
             bincode::encode_into_std_write(self.public_key, &mut hasher, bincode_cfg).unwrap();
             hasher.update(&(message.len() as u64).to_le_bytes());
             hasher.update(message);
-            bincode::encode_into_std_write(&commitment, &mut hasher, bincode_cfg).unwrap();
+            bincode::encode_into_std_write(commitment, &mut hasher, bincode_cfg).unwrap();
             hasher.finalize()
         };
         let _challenge1 = self
@@ -184,15 +184,15 @@ where
 
         self.verifier.commit_receive_response(response.clone());
         let h2 = {
-            let mut hasher = blake3::Hasher::new_derive_key("FS-FAEST-2").chain_update(&h1);
-            bincode::encode_into_std_write(&response, &mut hasher, bincode_cfg).unwrap();
+            let mut hasher = blake3::Hasher::new_derive_key("FS-FAEST-2").chain_update(h1);
+            bincode::encode_into_std_write(response, &mut hasher, bincode_cfg).unwrap();
             hasher.finalize()
         };
         let _challenge2 = self.verifier.send_challenge_from_seed(h2.into());
 
         let h3 = {
-            let mut hasher = blake3::Hasher::new_derive_key("FS-FAEST-3").chain_update(&h2);
-            bincode::encode_into_std_write(&proof, &mut hasher, bincode_cfg).unwrap();
+            let mut hasher = blake3::Hasher::new_derive_key("FS-FAEST-3").chain_update(h2);
+            bincode::encode_into_std_write(proof, &mut hasher, bincode_cfg).unwrap();
             hasher.finalize()
         };
         let _choice = self.verifier.choose_from_seed(proof.clone(), h3.into());

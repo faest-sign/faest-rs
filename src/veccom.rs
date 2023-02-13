@@ -40,15 +40,15 @@ impl<H: Digest> From<DigestOutput<H>> for Commitment<H> {
     }
 }
 
-impl<H: Digest> Into<DigestOutput<H>> for &Commitment<H> {
-    fn into(self) -> DigestOutput<H> {
-        self.hash.clone()
+impl<H: Digest> From<&Commitment<H>> for DigestOutput<H> {
+    fn from(val: &Commitment<H>) -> Self {
+        val.hash.clone()
     }
 }
 
-impl<H: Digest> Into<DigestOutput<H>> for Commitment<H> {
-    fn into(self) -> DigestOutput<H> {
-        self.hash
+impl<H: Digest> From<Commitment<H>> for DigestOutput<H> {
+    fn from(val: Commitment<H>) -> Self {
+        val.hash
     }
 }
 

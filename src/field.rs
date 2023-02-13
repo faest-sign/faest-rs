@@ -36,6 +36,10 @@ impl GF2Vector {
         self.bits.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.bits.is_empty()
+    }
+
     pub fn resize(&mut self, size: usize, value: bool) {
         self.bits.resize(size, value)
     }
@@ -55,9 +59,9 @@ impl From<BitVec<u8>> for GF2Vector {
     }
 }
 
-impl Into<BitVec<u8>> for GF2Vector {
-    fn into(self) -> BitVec<u8> {
-        self.bits
+impl From<GF2Vector> for BitVec<u8> {
+    fn from(vec: GF2Vector) -> Self {
+        vec.bits
     }
 }
 
