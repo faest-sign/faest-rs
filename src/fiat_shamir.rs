@@ -232,6 +232,6 @@ mod tests {
             .with_fixed_int_encoding()
             .skip_fixed_array_length();
         let encoded_signature = bincode::encode_to_vec(signature, bincode_cfg).unwrap();
-        assert_eq!(encoded_signature.len(), 7191);
+        assert_eq!(encoded_signature.len(), 6583);
     }
 }

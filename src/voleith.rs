@@ -93,8 +93,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
         let tau = self.num_repetitions;
         let ell_hat = self.vole_length + self.num_repetitions;
 
-        // let mut hasher = Blake3Hasher::new();
-        let mut commitments = Vec::with_capacity(tau);
+        let mut hasher = H::new();
         let mut correction_values =
             Vec::with_capacity(if message.is_some() { tau } else { tau - 1 });
 
@@ -102,8 +101,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
         {
             let (commitment, decommitment_key, mut xofs) = VC::commit(log_q);
             self.decommitment_keys.push(decommitment_key);
-            // hasher.update(commitment.as_ref());
-            commitments.push(commitment);
+            hasher.update(commitment.as_ref());
             // iteration x = 0
             let u_0 = &mut self.u;
             xofs[0].read(u_0.bits.as_raw_mut_slice());
@@ -133,8 +131,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
         for i in 1..tau {
             let (commitment, decommitment_key, mut xofs) = VC::commit(log_q);
             self.decommitment_keys.push(decommitment_key);
-            // hasher.update(commitment.as_ref());
-            commitments.push(commitment);
+            hasher.update(commitment.as_ref());
             // iteration x = 0
             let mut u_i = {
                 let mut r_0_1 = GF2Vector::with_capacity(ell_hat);
@@ -159,7 +156,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
             correction_values.push(u_i);
         }
 
-        // let commitment = hasher.finalize();
+        let vc_commitment_hash = hasher.finalize();
 
         // transpose V such that we can now access it row-wise
         {
@@ -173,8 +170,36 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
         }
 
         self.state = VoleInTheHeadSenderState::Committed;
-        // (commitment, correction_values)
-        (commitments, correction_values)
+        Commitment {
+            vc_commitment_hash,
+            correction_values,
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Commitment<H: Digest> {
+    pub vc_commitment_hash: DigestOutput<H>,
+    pub correction_values: Vec<GF2Vector>,
+}
+
+impl<H: Digest> Clone for Commitment<H> {
+    fn clone(&self) -> Self {
+        Self {
+            vc_commitment_hash: self.vc_commitment_hash.clone(),
+            correction_values: self.correction_values.clone(),
+        }
+    }
+}
+
+impl<H: Digest> bincode::Encode for Commitment<H> {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> core::result::Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&self.vc_commitment_hash.as_slice(), encoder)?;
+        bincode::Encode::encode(&self.correction_values, encoder)?;
+        Ok(())
     }
 }
 
@@ -206,7 +231,7 @@ impl<F: bincode::Encode, H: Digest> bincode::Encode for Response<F, H> {
 
 #[allow(non_snake_case)]
 impl<VC: VecCom, H: Digest> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC, H> {
-    type Commitment = (Vec<VC::Commitment>, Vec<GF2Vector>);
+    type Commitment = Commitment<H>;
     type Challenge = Vector<Self::Field>;
     type Response = Response<Self::Field, H>;
     type Decommitment = Vec<VC::Decommitment>;
@@ -310,7 +335,7 @@ pub struct VoleInTheHeadReceiverFromVC<VC: VecCom, H: Digest = blake3::Hasher> {
     state: VoleInTheHeadReceiverState,
     // commitment: Option<Blake3Hash>,
     random_commitment: bool,
-    commitments: Vec<VC::Commitment>,
+    vc_commitment_hash: DigestOutput<H>,
     correction_values: Vec<GF2Vector>,
     consistency_challenges: GF2p8Vector,
     u_tilde: GF2p8Vector,
@@ -323,7 +348,7 @@ pub struct VoleInTheHeadReceiverFromVC<VC: VecCom, H: Digest = blake3::Hasher> {
 
 #[allow(non_snake_case)]
 impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC, H> {
-    type Commitment = (Vec<VC::Commitment>, Vec<GF2Vector>);
+    type Commitment = Commitment<H>;
     type Challenge = Vector<Self::Field>;
     type Response = Response<Self::Field, H>;
     type Decommitment = Vec<VC::Decommitment>;
@@ -338,7 +363,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
             state: VoleInTheHeadReceiverState::New,
             // commitment: None,
             random_commitment: false,
-            commitments: Vec::new(),
+            vc_commitment_hash: Default::default(),
             correction_values: Vec::new(),
             consistency_challenges: Default::default(),
             u_tilde: Default::default(),
@@ -352,9 +377,12 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
 
     fn receive_commitment(&mut self, commitment: Self::Commitment) {
         assert_eq!(self.state, VoleInTheHeadReceiverState::New);
-        let (commitments, correction_values) = commitment;
+        let Commitment {
+            vc_commitment_hash,
+            correction_values,
+        } = commitment;
         assert_eq!(correction_values.len(), self.num_repetitions);
-        self.commitments = commitments;
+        self.vc_commitment_hash = vc_commitment_hash;
         self.correction_values = correction_values;
         self.random_commitment = false;
         self.state = VoleInTheHeadReceiverState::CommitmentReceived;
@@ -362,9 +390,12 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
 
     fn receive_random_commitment(&mut self, commitment: Self::Commitment) {
         assert_eq!(self.state, VoleInTheHeadReceiverState::New);
-        let (commitments, correction_values) = commitment;
+        let Commitment {
+            vc_commitment_hash,
+            correction_values,
+        } = commitment;
         assert_eq!(correction_values.len(), self.num_repetitions - 1);
-        self.commitments = commitments;
+        self.vc_commitment_hash = vc_commitment_hash;
         self.correction_values = correction_values;
         self.random_commitment = true;
         self.state = VoleInTheHeadReceiverState::CommitmentReceived;
@@ -434,20 +465,14 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
         let mut r_x_i = GF2Vector::with_capacity(ell_hat);
         r_x_i.resize(ell_hat, false);
 
+        let mut hasher = H::new();
+
         // iteration i = 0
         {
             let Delta_0 = self.final_challenges[0];
-            let xofs = VC::verify(
-                log_q,
-                &self.commitments[0],
-                &decommitments[0],
-                Delta_0.0 as usize,
-            );
-            if xofs.is_none() {
-                self.state = VoleInTheHeadReceiverState::Failed;
-                return false;
-            }
-            let mut xofs = xofs.unwrap();
+            let (recomputed_commitment, mut xofs) =
+                VC::recompute_commitment(log_q, &decommitments[0], Delta_0.0 as usize);
+            hasher.update(recomputed_commitment.as_ref());
             let mut w_0 = W.row_mut(0);
             debug_assert_eq!(xofs.len(), 256);
             for (x, xof_x) in xofs.iter_mut().enumerate() {
@@ -473,27 +498,21 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
 
         // other iterations
         debug_assert_eq!(self.final_challenges.len(), tau);
-        debug_assert_eq!(self.commitments.len(), tau);
         debug_assert_eq!(decommitments.len(), tau);
-        for ((i, (&Delta_i, commitment_i, decommitment_i)), correction_value_i) in izip!(
-            self.final_challenges.iter(),
-            self.commitments.iter(),
-            decommitments.iter()
-        )
-        .enumerate()
-        .skip(1)
-        .zip(
-            self.correction_values
-                .iter()
-                .skip(if self.random_commitment { 0 } else { 1 }),
-        ) {
+        for ((i, (&Delta_i, decommitment_i)), correction_value_i) in
+            izip!(self.final_challenges.iter(), decommitments.iter())
+                .enumerate()
+                .skip(1)
+                .zip(
+                    self.correction_values
+                        .iter()
+                        .skip(if self.random_commitment { 0 } else { 1 }),
+                )
+        {
             // for i in 1..tau {
-            let xofs = VC::verify(log_q, commitment_i, decommitment_i, Delta_i.0 as usize);
-            if xofs.is_none() {
-                self.state = VoleInTheHeadReceiverState::Failed;
-                return false;
-            }
-            let mut xofs = xofs.unwrap();
+            let (recomputed_commitment, mut xofs) =
+                VC::recompute_commitment(log_q, decommitment_i, Delta_i.0 as usize);
+            hasher.update(recomputed_commitment.as_ref());
             let mut w_i = W.row_mut(i);
             debug_assert_eq!(xofs.len(), 256);
             for (x, xof_x) in xofs.iter_mut().enumerate() {
@@ -511,6 +530,11 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
                     w_i[j] += Delta_i;
                 }
             }
+        }
+
+        if hasher.finalize() != self.vc_commitment_hash {
+            self.state = VoleInTheHeadReceiverState::Failed;
+            return false;
         }
 
         // transpose W s.t. we can access it row-wise

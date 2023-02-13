@@ -5,7 +5,7 @@ use digest::{Digest, Output as DigestOutput, XofReader};
 use rand::thread_rng;
 
 pub trait VecCom {
-    type Commitment: Clone + AsRef<[u8]>;
+    type Commitment: Clone + Eq + AsRef<[u8]>;
     type DecommitmentKey: Copy;
     type Decommitment: Clone;
     type XofReader: XofReader;
@@ -27,9 +27,14 @@ pub trait VecCom {
         decommitment: &Self::Decommitment,
         index: usize,
     ) -> Option<Vec<Self::XofReader>>;
+    fn recompute_commitment(
+        log_num_messages: u32,
+        decommitment: &Self::Decommitment,
+        index: usize,
+    ) -> (Self::Commitment, Vec<Self::XofReader>);
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Commitment<H: Digest> {
     hash: DigestOutput<H>,
 }
@@ -59,6 +64,13 @@ impl<H: Digest> Clone for Commitment<H> {
         }
     }
 }
+
+impl<H: Digest> PartialEq for Commitment<H> {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+impl<H: Digest> Eq for Commitment<H> {}
 
 impl<H: Digest> AsRef<[u8]> for Commitment<H> {
     fn as_ref(&self) -> &[u8] {
@@ -163,6 +175,20 @@ where
         decommitment: &Self::Decommitment,
         index: usize,
     ) -> Option<Vec<Self::XofReader>> {
+        let (recomputed_commitment, xofs) =
+            Self::recompute_commitment(log_num_messages, decommitment, index);
+        if recomputed_commitment == *commitment {
+            Some(xofs)
+        } else {
+            None
+        }
+    }
+
+    fn recompute_commitment(
+        log_num_messages: u32,
+        decommitment: &Self::Decommitment,
+        index: usize,
+    ) -> (Self::Commitment, Vec<Self::XofReader>) {
         let num_messages = 1usize << log_num_messages;
         let tree_height = log_num_messages as usize;
         assert!(index < num_messages);
@@ -202,11 +228,7 @@ where
             hasher.finalize()
         };
 
-        if recomputed_commitment == commitment.into() {
-            Some(xofs)
-        } else {
-            None
-        }
+        (recomputed_commitment.into(), xofs)
     }
 }
 
