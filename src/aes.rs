@@ -49,13 +49,7 @@ impl Aes {
             return None;
         }
 
-        buf.extend(
-            inv_outputs
-                .iter()
-                .map(|x| x.0)
-                .flatten()
-                .map(Into::<u8>::into),
-        );
+        buf.extend(inv_outputs.iter().flat_map(|x| x.0).map(Into::<u8>::into));
         let output = output_state.0.map(Into::into);
 
         assert_eq!(buf.len(), EXTENDED_WITNESS_BYTE_SIZE);

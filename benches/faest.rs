@@ -1,4 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use homcomzk::faest::{Prover, Verifier};
 use homcomzk::{keygen, FaestProver, FaestVerifier};
 
 pub fn bench_keygen(c: &mut Criterion) {

@@ -323,6 +323,7 @@ where
         };
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_lifted_commitments(
         &mut self,
     ) -> (
@@ -537,9 +538,9 @@ where
 
                 tags
             };
-            for j in 0..16 {
+            for input_tag_j in input_tag {
                 let chi_k = GF2p128::random(&mut chi_rng);
-                A1 += chi_k * input_tag[j];
+                A1 += chi_k * input_tag_j;
             }
         }
 
@@ -643,8 +644,7 @@ where
         self.lift_commitments();
         let B = self.aggregates_conditions();
         let (A0, A1) = self.proof;
-        // assert_eq!(B, A0 + A1 * self.global_key);
-        return B == A0 + A1 * self.global_key;
+        B == A0 + A1 * self.global_key
     }
 }
 
@@ -743,6 +743,7 @@ where
         };
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_lifted_commitments(
         &mut self,
     ) -> (
@@ -884,21 +885,6 @@ where
         }
 
         B
-    }
-
-    #[allow(non_snake_case)]
-    pub fn verify(&mut self, decommitment: HCR::Decommitment) -> bool {
-        if let Some((global_key, keys)) = self.hc_receiver.receive(decommitment) {
-            self.global_key = global_key;
-            self.keys = keys;
-        } else {
-            return false;
-        }
-        self.lift_commitments();
-        let B = self.aggregates_conditions();
-        let (A0, A1) = self.proof;
-        // assert_eq!(B, A0 + A1 * self.global_key);
-        return B == A0 + A1 * self.global_key;
     }
 }
 

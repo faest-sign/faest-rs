@@ -11,8 +11,6 @@ pub mod voleith;
 
 pub use faest::{keygen, PublicKey, SecretKey};
 
-use blake3;
-
 type VC = veccom::GgmVecCom<
     common::Block128,
     primitives::Aes128CtrLdPrg,

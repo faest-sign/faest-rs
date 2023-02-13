@@ -661,9 +661,9 @@ impl From<u8> for GF2p8 {
     }
 }
 
-impl Into<u8> for GF2p8 {
-    fn into(self) -> u8 {
-        self.0
+impl From<GF2p8> for u8 {
+    fn from(val: GF2p8) -> u8 {
+        val.0
     }
 }
 
