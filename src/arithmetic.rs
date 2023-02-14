@@ -1,4 +1,4 @@
-use crate::field::{GF2View, GF2p8};
+use crate::field::{GF2Vector, GF2View, GF2p8};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 
 type GF2p8Vector = Array1<GF2p8>;
@@ -99,6 +99,7 @@ pub fn bitmul_accumulate(ys: &mut [GF2p8], x: GF2p8, bs: &[u8]) {
     // blocks in the array.
     let xmm_slice =
         unsafe { std::slice::from_raw_parts_mut(ys.as_mut_ptr() as *mut u128, n_blocks) };
+    // TODO: maybe rewrite this with simd intrinsics
     for j in 0..n_blocks {
         let mask_lo = MASK_TABLE[bs[2 * j] as usize] as u128;
         let mask_hi = MASK_TABLE[bs[2 * j + 1] as usize] as u128;
@@ -118,7 +119,6 @@ pub fn bitmul_accumulate(ys: &mut [GF2p8], x: GF2p8, bs: &[u8]) {
 
     if n & 7 != 0 {
         let start_idx = n & !7;
-        eprintln!("s = {start_idx}");
         for i in 0..(n & 7) {
             let last_bs = bs.last().unwrap();
             if last_bs & (1 << i) != 0 {
@@ -142,6 +142,22 @@ pub fn bitmul_accumulate_naive(ys: &mut [GF2p8], x: GF2p8, bs: &[u8]) {
             ys[i] += x;
         }
     }
+}
+
+pub fn bit_xor_assign(ys: &mut GF2Vector, xs: &GF2Vector) {
+    debug_assert!(ys.len() <= xs.len());
+    let y_slice = ys.as_raw_mut_slice();
+    let x_slice = xs.as_raw_slice();
+    debug_assert!(y_slice.len() <= x_slice.len());
+    y_slice
+        .iter_mut()
+        .zip(x_slice.iter())
+        .for_each(|(y, x)| *y ^= x);
+}
+
+pub fn bit_xor_assign_naive(ys: &mut GF2Vector, xs: &GF2Vector) {
+    debug_assert!(ys.len() <= xs.len());
+    ys.bits ^= &xs.bits;
 }
 
 #[cfg(test)]
@@ -247,6 +263,22 @@ mod tests {
 
         bitmul_accumulate_naive(&mut ys_1, x, bs.as_raw_slice());
         bitmul_accumulate(&mut ys_2, x, bs.as_raw_slice());
+        assert_eq!(ys_1, ys_2);
+    }
+
+    #[test]
+    fn test_bit_xor_assign() {
+        let n = (16 + 8 + 3) * 8;
+        let mut xs = GF2Vector::with_capacity(n);
+        xs.bits.resize(n, false);
+        thread_rng().fill(xs.as_raw_mut_slice());
+        let mut ys_1 = GF2Vector::with_capacity(n);
+        ys_1.bits.resize(n, false);
+        thread_rng().fill(ys_1.as_raw_mut_slice());
+        let mut ys_2 = ys_1.clone();
+
+        bit_xor_assign_naive(&mut ys_1, &xs);
+        bit_xor_assign(&mut ys_2, &xs);
         assert_eq!(ys_1, ys_2);
     }
 }

@@ -1,4 +1,6 @@
-use crate::arithmetic::{bitmul_accumulate, hash_bitvector_and_matrix, hash_matrix};
+use crate::arithmetic::{
+    bit_xor_assign, bitmul_accumulate, hash_bitvector_and_matrix, hash_matrix,
+};
 use crate::field::{GF2Vector, GF2View, GF2p8};
 use crate::veccom::VecCom;
 use core::marker::PhantomData;
@@ -111,7 +113,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
                 let mut r_x_0 = GF2Vector::with_capacity(ell_hat);
                 r_x_0.resize(ell_hat, false);
                 xof_x.read(r_x_0.as_raw_mut_slice());
-                *u_0.bits ^= &r_x_0.bits;
+                bit_xor_assign(u_0, &r_x_0);
                 bitmul_accumulate(
                     v_0.as_slice_mut().unwrap(),
                     GF2p8(x as u8),
@@ -120,7 +122,8 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
             }
             if let Some(msg) = message {
                 let mut msg_correction = msg.clone();
-                msg_correction.bits ^= &u_0.bits[0..self.vole_length];
+                bit_xor_assign(&mut msg_correction, &u_0);
+                msg_correction.bits.set_uninitialized(false);
                 debug_assert_eq!(msg_correction.bits.len(), self.vole_length);
                 correction_values.push(msg_correction);
                 u_0.bits[0..self.vole_length].copy_from_bitslice(msg.as_ref());
@@ -145,14 +148,14 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
                 let mut r_x_i = GF2Vector::with_capacity(ell_hat);
                 r_x_i.resize(ell_hat, false);
                 xof_x.read(r_x_i.as_raw_mut_slice());
-                u_i.bits ^= &r_x_i.bits;
+                bit_xor_assign(&mut u_i, &r_x_i);
                 bitmul_accumulate(
                     v_i.as_slice_mut().unwrap(),
                     GF2p8(x as u8),
                     r_x_i.as_raw_slice(),
                 );
             }
-            u_i.bits ^= &self.u.bits;
+            bit_xor_assign(&mut u_i, &self.u);
             correction_values.push(u_i);
         }
 

@@ -1,6 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use ff::Field;
-use homcomzk::arithmetic::{bitmul_accumulate, bitmul_accumulate_naive};
+use homcomzk::arithmetic::{
+    bit_xor_assign, bit_xor_assign_naive, bitmul_accumulate, bitmul_accumulate_naive,
+};
 use homcomzk::field::{GF2Vector, GF2p8};
 use rand::{thread_rng, Rng};
 
@@ -22,5 +24,24 @@ pub fn bench_bitmul_accumulate(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_bitmul_accumulate);
+pub fn bench_bit_xor_assign(c: &mut Criterion) {
+    let n = 10000;
+    let mut xs = GF2Vector::with_capacity(n);
+    xs.bits.resize(n, false);
+    thread_rng().fill(xs.as_raw_mut_slice());
+    let mut ys = GF2Vector::with_capacity(n);
+    ys.bits.resize(n, false);
+    thread_rng().fill(ys.as_raw_mut_slice());
+
+    let mut g = c.benchmark_group("bit_xor_assign");
+
+    g.bench_function("clever", |b| {
+        b.iter(|| bit_xor_assign(&mut ys, &xs));
+    });
+    g.bench_function("naive", |b| {
+        b.iter(|| bit_xor_assign_naive(&mut ys, &xs));
+    });
+}
+
+criterion_group!(benches, bench_bitmul_accumulate, bench_bit_xor_assign);
 criterion_main!(benches);
