@@ -1,4 +1,4 @@
-use crate::arithmetic::{hash_bitvector_and_matrix, hash_matrix};
+use crate::arithmetic::{bitmul_accumulate, hash_bitvector_and_matrix, hash_matrix};
 use crate::field::{GF2Vector, GF2View, GF2p8};
 use crate::veccom::VecCom;
 use core::marker::PhantomData;
@@ -112,11 +112,11 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
                 r_x_0.resize(ell_hat, false);
                 xof_x.read(r_x_0.as_raw_mut_slice());
                 *u_0.bits ^= &r_x_0.bits;
-                for (i, b) in r_x_0.bits.iter().enumerate() {
-                    if *b {
-                        v_0[i] -= GF2p8(x as u8);
-                    }
-                }
+                bitmul_accumulate(
+                    v_0.as_slice_mut().unwrap(),
+                    GF2p8(x as u8),
+                    r_x_0.as_raw_slice(),
+                );
             }
             if let Some(msg) = message {
                 let mut msg_correction = msg.clone();
@@ -146,11 +146,11 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
                 r_x_i.resize(ell_hat, false);
                 xof_x.read(r_x_i.as_raw_mut_slice());
                 u_i.bits ^= &r_x_i.bits;
-                for (i, b) in r_x_i.bits.iter().enumerate() {
-                    if *b {
-                        v_i[i] -= GF2p8(x as u8);
-                    }
-                }
+                bitmul_accumulate(
+                    v_i.as_slice_mut().unwrap(),
+                    GF2p8(x as u8),
+                    r_x_i.as_raw_slice(),
+                );
             }
             u_i.bits ^= &self.u.bits;
             correction_values.push(u_i);
@@ -478,21 +478,21 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
             for (x, xof_x) in xofs.iter_mut().enumerate() {
                 xof_x.read(r_x_i.as_raw_mut_slice());
                 let Delta_0_minus_x = Delta_0 - GF2p8(x as u8);
-                for (j, b) in r_x_i.bits.iter().enumerate() {
-                    if *b {
-                        w_0[j] += Delta_0_minus_x;
-                    }
-                }
+                bitmul_accumulate(
+                    w_0.as_slice_mut().unwrap(),
+                    Delta_0_minus_x,
+                    r_x_i.as_raw_slice(),
+                );
             }
 
             if !self.random_commitment {
                 debug_assert_eq!(self.correction_values.len(), self.num_repetitions);
                 debug_assert_eq!(self.correction_values[0].len(), self.vole_length);
-                for (j, b) in self.correction_values[0].bits.iter().enumerate() {
-                    if *b {
-                        w_0[j] += Delta_0;
-                    }
-                }
+                bitmul_accumulate(
+                    &mut w_0.as_slice_mut().unwrap()[..self.vole_length],
+                    Delta_0,
+                    self.correction_values[0].as_raw_slice(),
+                );
             }
         }
 
@@ -518,18 +518,18 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
             for (x, xof_x) in xofs.iter_mut().enumerate() {
                 xof_x.read(r_x_i.as_raw_mut_slice());
                 let Delta_i_minus_x = Delta_i - GF2p8(x as u8);
-                for (j, b) in r_x_i.bits.iter().enumerate() {
-                    if *b {
-                        w_i[j] += Delta_i_minus_x;
-                    }
-                }
+                bitmul_accumulate(
+                    w_i.as_slice_mut().unwrap(),
+                    Delta_i_minus_x,
+                    r_x_i.as_raw_slice(),
+                );
             }
 
-            for (j, b) in correction_value_i.bits.iter().enumerate() {
-                if *b {
-                    w_i[j] += Delta_i;
-                }
-            }
+            bitmul_accumulate(
+                w_i.as_slice_mut().unwrap(),
+                Delta_i,
+                correction_value_i.as_raw_slice(),
+            );
         }
 
         if hasher.finalize() != self.vc_commitment_hash {

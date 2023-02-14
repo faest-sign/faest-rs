@@ -1,5 +1,5 @@
 mod aes;
-mod arithmetic;
+pub mod arithmetic;
 mod common;
 pub mod faest;
 pub mod fiat_shamir;

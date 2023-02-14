@@ -59,11 +59,98 @@ pub fn hash_bitvector_and_matrix(
     (hash_bitvector(r, v), hash_matrix(r, M))
 }
 
+const fn gen_mask_table() -> [u64; 256] {
+    const fn f(x: u8) -> u64 {
+        let mut m = 0;
+        let mut i = 0;
+        while i < 8 {
+            if x & (1 << i) != 0 {
+                m |= 0xff << (i * 8);
+            }
+            i += 1;
+        }
+        m
+    }
+    let mut table = [0; 256];
+    let mut x = 0;
+    while x < 256 {
+        table[x] = f(x as u8);
+        x += 1;
+    }
+    table
+}
+
+const MASK_TABLE: [u64; 256] = gen_mask_table();
+
+/// Compute y_i += x * b_i for i = 0..
+pub fn bitmul_accumulate(ys: &mut [GF2p8], x: GF2p8, bs: &[u8]) {
+    let n = ys.len();
+    debug_assert!(
+        (bs.len() * 8 - 7 <= n) && (n <= bs.len() * 8),
+        "ys.len() = {}, but bs.len() * 8 = {}",
+        ys.len(),
+        bs.len() * 8
+    );
+
+    let n_blocks = n / 16;
+
+    let xs = u128::from_le_bytes([x.0; 16]);
+    // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 16B
+    // blocks in the array.
+    let xmm_slice =
+        unsafe { std::slice::from_raw_parts_mut(ys.as_mut_ptr() as *mut u128, n_blocks) };
+    for j in 0..n_blocks {
+        let mask_lo = MASK_TABLE[bs[2 * j] as usize] as u128;
+        let mask_hi = MASK_TABLE[bs[2 * j + 1] as usize] as u128;
+        let mask = mask_hi << 64 | mask_lo;
+        xmm_slice[j] ^= mask & xs;
+    }
+
+    if n & 8 != 0 {
+        let xs = u64::from_le_bytes([x.0; 8]);
+        // This cast is also fine, since the remainder of the array is more than 8B big.
+        let q_slice = unsafe {
+            std::slice::from_raw_parts_mut(ys.as_mut_ptr() as *mut u64, 2 * n_blocks + 1)
+        };
+        let mask = MASK_TABLE[bs[2 * n_blocks] as usize];
+        q_slice[2 * n_blocks] ^= mask & xs;
+    }
+
+    if n & 7 != 0 {
+        let start_idx = n & !7;
+        eprintln!("s = {start_idx}");
+        for i in 0..(n & 7) {
+            let last_bs = bs.last().unwrap();
+            if last_bs & (1 << i) != 0 {
+                ys[start_idx + i] += x;
+            }
+        }
+    }
+}
+
+pub fn bitmul_accumulate_naive(ys: &mut [GF2p8], x: GF2p8, bs: &[u8]) {
+    let n = ys.len();
+    debug_assert!(
+        (bs.len() * 8 - 7 <= n) && (n <= bs.len() * 8),
+        "ys.len() = {}, but bs.len() * 8 = {}",
+        ys.len(),
+        bs.len() * 8
+    );
+    let bs = GF2View::from_slice(bs);
+    for (i, b) in bs.iter().take(n).enumerate() {
+        if *b {
+            ys[i] += x;
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
     use crate::field::GF2Vector;
+    use ff::Field;
+    use rand::{thread_rng, Rng};
 
     #[test]
     fn test_hash() {
@@ -146,5 +233,20 @@ mod tests {
             hash_bitvector_and_matrix((&r).into(), v.as_ref(), (&M).into()),
             (Rv, RM)
         );
+    }
+
+    #[test]
+    fn test_bitmul_accumulate() {
+        let n = 16 + 8 + 3;
+        let x = GF2p8::random(thread_rng());
+        let mut ys_1: Vec<_> = (0..n).map(|_| GF2p8::random(thread_rng())).collect();
+        let mut ys_2 = ys_1.clone();
+        let mut bs = GF2Vector::with_capacity(n);
+        bs.bits.resize(n, false);
+        thread_rng().fill(bs.as_raw_mut_slice());
+
+        bitmul_accumulate_naive(&mut ys_1, x, bs.as_raw_slice());
+        bitmul_accumulate(&mut ys_2, x, bs.as_raw_slice());
+        assert_eq!(ys_1, ys_2);
     }
 }
