@@ -122,7 +122,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
             }
             if let Some(msg) = message {
                 let mut msg_correction = msg.clone();
-                bit_xor_assign(&mut msg_correction, &u_0);
+                bit_xor_assign(&mut msg_correction, u_0);
                 msg_correction.bits.set_uninitialized(false);
                 debug_assert_eq!(msg_correction.bits.len(), self.vole_length);
                 correction_values.push(msg_correction);
