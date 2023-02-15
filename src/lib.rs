@@ -23,13 +23,13 @@ type VC = veccom::GgmVecCom<
     blake3::Hasher,
     primitives::Blake3LE<common::Block128>,
 >;
-pub type FaestProver = faest::FaestProverFromHC<
-    homcom::HomCom128SenderFromVitH<voleith::VoleInTheHeadSenderFromVC<gf2psmall::GF2p8, VC>>,
+pub type FaestProver<F> = faest::FaestProverFromHC<
+    homcom::HomCom128SenderFromVitH<voleith::VoleInTheHeadSenderFromVC<F, VC>>,
 >;
-pub type FaestVerifier = faest::FaestVerifierFromHC<
-    homcom::HomCom128ReceiverFromVitH<voleith::VoleInTheHeadReceiverFromVC<gf2psmall::GF2p8, VC>>,
+pub type FaestVerifier<F> = faest::FaestVerifierFromHC<
+    homcom::HomCom128ReceiverFromVitH<voleith::VoleInTheHeadReceiverFromVC<F, VC>>,
 >;
 
-pub type FaestSignature = fiat_shamir::FsSignature<FaestProver>;
-pub type FaestSigner = fiat_shamir::FsSigner<FaestProver, FaestVerifier>;
-pub type FaestSignatureVerifier = fiat_shamir::FsVerifier<FaestProver, FaestVerifier>;
+pub type FaestSignature<F> = fiat_shamir::FsSignature<FaestProver<F>>;
+pub type FaestSigner<F> = fiat_shamir::FsSigner<FaestProver<F>, FaestVerifier<F>>;
+pub type FaestSignatureVerifier<F> = fiat_shamir::FsVerifier<FaestProver<F>, FaestVerifier<F>>;

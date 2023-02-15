@@ -31,6 +31,23 @@ where
     decommitment: P::Decommitment,
 }
 
+impl<P> FsSignature<P>
+where
+    P: FaestProver,
+    P::Commitment: bincode::Encode,
+    P::Response: bincode::Encode,
+    P::Proof: bincode::Encode,
+    P::Decommitment: bincode::Encode,
+{
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let bincode_cfg = bincode::config::standard()
+            .with_little_endian()
+            .with_fixed_int_encoding()
+            .skip_fixed_array_length();
+        bincode::encode_to_vec(self, bincode_cfg).unwrap()
+    }
+}
+
 impl<P> bincode::Encode for FsSignature<P>
 where
     P: FaestProver,
@@ -227,14 +244,13 @@ mod tests {
         let verifier = FaestVerifier::<F>::new(pk);
         let result = verifier.verify(&signature, message.as_bytes());
         assert!(result);
-        let bincode_cfg = bincode::config::standard()
-            .with_little_endian()
-            .with_fixed_int_encoding()
-            .skip_fixed_array_length();
-        let encoded_signature = bincode::encode_to_vec(signature, bincode_cfg).unwrap();
+        let encoded_signature = signature.to_bytes();
         match F::LOG_ORDER {
+            7 => assert_eq!(encoded_signature.len(), 7506),
             8 => assert_eq!(encoded_signature.len(), 6583),
+            9 => assert_eq!(encoded_signature.len(), 6435),
             10 => assert_eq!(encoded_signature.len(), 5803),
+            11 => assert_eq!(encoded_signature.len(), 5559),
             _ => panic!("unknown field size"),
         }
     }
