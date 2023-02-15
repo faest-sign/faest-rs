@@ -53,7 +53,7 @@ pub struct HomCom128SenderFromVitH<VitHS> {
 impl<VitHS> HomComSender for HomCom128SenderFromVitH<VitHS>
 where
     VitHS: VoleInTheHeadSender,
-    VitHS::Field: VecToGF2p128 + fmt::Debug,
+    VitHS::Field: VecToGF2p128<GF2p128> + fmt::Debug,
 {
     type Choice = Vector<VitHS::Field>;
     type Tag = GF2p128;
@@ -101,7 +101,7 @@ pub struct HomCom128ReceiverFromVitH<VitHR> {
 impl<VitHR> HomComReceiver for HomCom128ReceiverFromVitH<VitHR>
 where
     VitHR: VoleInTheHeadReceiver,
-    VitHR::Field: VecToGF2p128,
+    VitHR::Field: VecToGF2p128<GF2p128>,
 {
     type Choice = Vector<VitHR::Field>;
     type GlobalKey = GF2p128;

@@ -1,10 +1,36 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ff::Field;
 use homcomzk::arithmetic::{
-    bit_xor_assign, bit_xor_assign_naive, bitmul_accumulate, bitmul_accumulate_naive,
+    bit_xor_assign, bit_xor_assign_naive, bitmul_accumulate, bitmul_accumulate_naive, clmul,
+    clmul_u64, clmul_u8,
 };
 use homcomzk::field::{GF2Vector, GF2p8};
 use rand::{thread_rng, Rng};
+
+pub fn bench_clmul(c: &mut Criterion) {
+    let mut g = c.benchmark_group("clmul");
+
+    g.bench_function("8/naive", |b| {
+        let x = thread_rng().gen();
+        let y = thread_rng().gen();
+        b.iter(|| black_box(clmul_u8(x, y)));
+    });
+    // g.bench_function("8/clever", |b| {
+    //     let x = thread_rng().gen();
+    //     let y = thread_rng().gen();
+    //     b.iter(|| black_box(clmul_u8(x, y)));
+    // });
+    g.bench_function("64/naive", |b| {
+        let x = thread_rng().gen();
+        let y = thread_rng().gen();
+        b.iter(|| black_box(clmul_u64(x, y)));
+    });
+    g.bench_function("64/clever", |b| {
+        let x = thread_rng().gen();
+        let y = thread_rng().gen();
+        b.iter(|| black_box(clmul(x, y)));
+    });
+}
 
 pub fn bench_bitmul_accumulate(c: &mut Criterion) {
     let n = 2000;
@@ -43,5 +69,10 @@ pub fn bench_bit_xor_assign(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_bitmul_accumulate, bench_bit_xor_assign);
+criterion_group!(
+    benches,
+    bench_clmul,
+    bench_bitmul_accumulate,
+    bench_bit_xor_assign
+);
 criterion_main!(benches);

@@ -1,5 +1,37 @@
 use crate::field::{GF2Vector, GF2View, GF2p8};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+
+macro_rules! make_clmul {
+    ($function_name:ident, $small_uint:ty, $large_uint:ty) => {
+        pub fn $function_name(x: $small_uint, y: $small_uint) -> $large_uint {
+            let x = x as $large_uint;
+            let y = y as $large_uint;
+            let mut result = 0;
+            for i in 0..<$small_uint>::BITS {
+                result ^= ((x >> i) & 1) * (y << i);
+            }
+            result
+        }
+    };
+}
+
+make_clmul!(clmul_u8, u8, u16);
+make_clmul!(clmul_u64, u64, u128);
+
+#[cfg(target_arch = "x86_64")]
+pub fn clmul(x: u64, y: u64) -> u128 {
+    let mut output = 0u128;
+    unsafe {
+        let x = _mm_set1_epi64x(x as i64);
+        let y = _mm_set1_epi64x(y as i64);
+        let z = _mm_clmulepi64_si128(x, y, 0);
+        let ptr: *mut u128 = &mut output;
+        _mm_storeu_si128(ptr as *mut __m128i, z)
+    };
+    output
+}
 
 type GF2p8Vector = Array1<GF2p8>;
 type GF2p8VectorView<'a> = ArrayView1<'a, GF2p8>;
@@ -167,6 +199,23 @@ mod tests {
     use crate::field::GF2Vector;
     use ff::Field;
     use rand::{thread_rng, Rng};
+
+    #[test]
+    fn test_clmul_u8() {
+        let a = 0xe6;
+        let b = 0xcd;
+        let c = 0x4ece;
+        assert_eq!(clmul_u8(a, b), c);
+    }
+
+    #[test]
+    fn test_clmul_u64() {
+        let a = 0x8cedd8695a31a3c0;
+        let b = 0x89eb6fd18fbf3991;
+        let c = 0x42ec785c6a2a23f8276b5a8ce243bfc0;
+        assert_eq!(clmul_u64(a, b), c);
+        assert_eq!(clmul(a, b), c);
+    }
 
     #[test]
     fn test_hash() {
