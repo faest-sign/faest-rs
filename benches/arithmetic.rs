@@ -1,11 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ff::Field;
 use homcomzk::arithmetic::{
-    bit_xor_assign, bit_xor_assign_naive, bitmul_accumulate, bitmul_accumulate_naive, clmul,
-    clmul_u64, clmul_u8, clmul_u8_x86,
+    bit_xor_assign, bit_xor_assign_naive, bitmul_accumulate_naive, bitmul_accumulate_u16,
+    bitmul_accumulate_u8, clmul, clmul_u64, clmul_u8, clmul_u8_x86,
 };
 use homcomzk::gf2::GF2Vector;
-use homcomzk::gf2psmall::GF2p8;
+use homcomzk::gf2psmall::{GF2p8, GF2p9};
 use rand::{thread_rng, Rng};
 
 pub fn bench_clmul(c: &mut Criterion) {
@@ -35,19 +35,24 @@ pub fn bench_clmul(c: &mut Criterion) {
 
 pub fn bench_bitmul_accumulate(c: &mut Criterion) {
     let n = 2000;
-    let x = GF2p8::random(thread_rng());
-    let mut ys: Vec<_> = (0..n).map(|_| GF2p8::random(thread_rng())).collect();
+    let x_8 = GF2p8::random(thread_rng());
+    let mut ys_8: Vec<_> = (0..n).map(|_| GF2p8::random(thread_rng())).collect();
+    let x_16 = GF2p9::random(thread_rng());
+    let mut ys_16: Vec<_> = (0..n).map(|_| GF2p9::random(thread_rng())).collect();
     let mut bs = GF2Vector::with_capacity(n);
     bs.bits.resize(n, false);
     thread_rng().fill(bs.as_raw_mut_slice());
 
     let mut g = c.benchmark_group("bitmul_accumulate");
 
-    g.bench_function("clever", |b| {
-        b.iter(|| bitmul_accumulate(&mut ys, x, bs.as_raw_slice()));
+    g.bench_function("clever-u8", |b| {
+        b.iter(|| unsafe { bitmul_accumulate_u8(&mut ys_8, x_8, bs.as_raw_slice()) });
     });
-    g.bench_function("naive", |b| {
-        b.iter(|| bitmul_accumulate_naive(&mut ys, x, bs.as_raw_slice()));
+    g.bench_function("clever-u16", |b| {
+        b.iter(|| unsafe { bitmul_accumulate_u16(&mut ys_16, x_16, bs.as_raw_slice()) });
+    });
+    g.bench_function("naive-u8", |b| {
+        b.iter(|| bitmul_accumulate_naive(&mut ys_8, x_8, bs.as_raw_slice()));
     });
 }
 

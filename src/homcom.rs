@@ -177,6 +177,7 @@ where
 mod tests {
     use super::*;
     use crate::common::Block128;
+    use crate::gf2psmall::{GF2p10, GF2p8, SmallGF};
     use crate::primitives::{Aes128CtrLdPrg, Blake3LE};
     use crate::veccom::GgmVecCom;
     use crate::voleith::{VoleInTheHeadReceiverFromVC, VoleInTheHeadSenderFromVC};
@@ -185,14 +186,13 @@ mod tests {
     use rand::{thread_rng, Rng};
 
     type VC = GgmVecCom<Block128, Aes128CtrLdPrg, blake3::Hasher, Blake3LE<Block128>>;
-    type VitHSender = VoleInTheHeadSenderFromVC<VC>;
-    type VitHReceiver = VoleInTheHeadReceiverFromVC<VC>;
+    type VitHSender<F> = VoleInTheHeadSenderFromVC<F, VC>;
+    type VitHReceiver<F> = VoleInTheHeadReceiverFromVC<F, VC>;
 
-    #[test]
-    fn test_correctness() {
+    fn test_correctness<F: SmallGF>() {
         let num_bits = 42;
-        let mut hc_sender = HomCom128SenderFromVitH::<VitHSender>::new(num_bits);
-        let mut hc_receiver = HomCom128ReceiverFromVitH::<VitHReceiver>::new(num_bits);
+        let mut hc_sender = HomCom128SenderFromVitH::<VitHSender<F>>::new(num_bits);
+        let mut hc_receiver = HomCom128ReceiverFromVitH::<VitHReceiver<F>>::new(num_bits);
 
         let bits = {
             let mut bits = GF2Vector::with_capacity(num_bits);
@@ -226,5 +226,15 @@ mod tests {
                 assert_eq!(key_i, tag_i);
             }
         }
+    }
+
+    #[test]
+    fn test_correctness_with_gf2p8() {
+        test_correctness::<GF2p8>();
+    }
+
+    #[test]
+    fn test_correctness_with_gf2p10() {
+        test_correctness::<GF2p10>();
     }
 }

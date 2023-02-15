@@ -207,24 +207,24 @@ mod tests {
     use crate::common::Block128;
     use crate::faest::keygen;
     use crate::faest::{FaestProverFromHC, FaestVerifierFromHC};
+    use crate::gf2psmall::{GF2p10, GF2p8, SmallGF};
     use crate::homcom::{HomCom128ReceiverFromVitH, HomCom128SenderFromVitH};
     use crate::primitives::{Aes128CtrLdPrg, Blake3LE};
     use crate::veccom::GgmVecCom;
     use crate::voleith::{VoleInTheHeadReceiverFromVC, VoleInTheHeadSenderFromVC};
 
     type VC = GgmVecCom<Block128, Aes128CtrLdPrg, blake3::Hasher, Blake3LE<Block128>>;
-    type FP = FaestProverFromHC<HomCom128SenderFromVitH<VoleInTheHeadSenderFromVC<VC>>>;
-    type FV = FaestVerifierFromHC<HomCom128ReceiverFromVitH<VoleInTheHeadReceiverFromVC<VC>>>;
-    type FaestSigner = FsSigner<FP, FV>;
-    type FaestVerifier = FsVerifier<FP, FV>;
+    type FP<F> = FaestProverFromHC<HomCom128SenderFromVitH<VoleInTheHeadSenderFromVC<F, VC>>>;
+    type FV<F> = FaestVerifierFromHC<HomCom128ReceiverFromVitH<VoleInTheHeadReceiverFromVC<F, VC>>>;
+    type FaestSigner<F> = FsSigner<FP<F>, FV<F>>;
+    type FaestVerifier<F> = FsVerifier<FP<F>, FV<F>>;
 
-    #[test]
-    fn test_correctness() {
+    fn test_correctness<F: SmallGF>() {
         let (sk, pk) = keygen();
         let message = "Am I happy or in misery?";
-        let signer = FaestSigner::new(sk, pk);
+        let signer = FaestSigner::<F>::new(sk, pk);
         let signature = signer.sign(message.as_bytes());
-        let verifier = FaestVerifier::new(pk);
+        let verifier = FaestVerifier::<F>::new(pk);
         let result = verifier.verify(&signature, message.as_bytes());
         assert!(result);
         let bincode_cfg = bincode::config::standard()
@@ -232,6 +232,20 @@ mod tests {
             .with_fixed_int_encoding()
             .skip_fixed_array_length();
         let encoded_signature = bincode::encode_to_vec(signature, bincode_cfg).unwrap();
-        assert_eq!(encoded_signature.len(), 6583);
+        match F::LOG_ORDER {
+            8 => assert_eq!(encoded_signature.len(), 6583),
+            10 => assert_eq!(encoded_signature.len(), 5803),
+            _ => panic!("unknown field size"),
+        }
+    }
+
+    #[test]
+    fn test_correctness_with_gf2p8() {
+        test_correctness::<GF2p8>();
+    }
+
+    #[test]
+    fn test_correctness_with_gf2p10() {
+        test_correctness::<GF2p10>();
     }
 }

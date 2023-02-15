@@ -903,6 +903,7 @@ where
 mod tests {
     use super::*;
     use crate::common::Block128;
+    use crate::gf2psmall::{GF2p10, GF2p8, SmallGF};
     use crate::homcom::{HomCom128ReceiverFromVitH, HomCom128SenderFromVitH};
     use crate::primitives::{Aes128CtrLdPrg, Blake3LE};
     use crate::veccom::GgmVecCom;
@@ -910,9 +911,10 @@ mod tests {
     use itertools::izip;
 
     type VC = GgmVecCom<Block128, Aes128CtrLdPrg, blake3::Hasher, Blake3LE<Block128>>;
-    type FaestProver = FaestProverFromHC<HomCom128SenderFromVitH<VoleInTheHeadSenderFromVC<VC>>>;
-    type FaestVerifier =
-        FaestVerifierFromHC<HomCom128ReceiverFromVitH<VoleInTheHeadReceiverFromVC<VC>>>;
+    type FaestProver<F> =
+        FaestProverFromHC<HomCom128SenderFromVitH<VoleInTheHeadSenderFromVC<F, VC>>>;
+    type FaestVerifier<F> =
+        FaestVerifierFromHC<HomCom128ReceiverFromVitH<VoleInTheHeadReceiverFromVC<F, VC>>>;
 
     const SECRET_KEY: SecretKey = SecretKey {
         key: [
@@ -965,10 +967,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_correctness() {
-        let mut prover = FaestProver::new(SECRET_KEY, PUBLIC_KEY);
-        let mut verifier = FaestVerifier::new(PUBLIC_KEY);
+    fn test_correctness<F: SmallGF>() {
+        let mut prover = FaestProver::<F>::new(SECRET_KEY, PUBLIC_KEY);
+        let mut verifier = FaestVerifier::<F>::new(PUBLIC_KEY);
 
         let commitment = prover.commit();
         let challenge = verifier.commit_send_challenge(commitment);
@@ -1050,5 +1051,15 @@ mod tests {
         }
 
         assert!(result, "verifier does not accept");
+    }
+
+    #[test]
+    fn test_correctness_with_gf2p8() {
+        test_correctness::<GF2p8>();
+    }
+
+    #[test]
+    fn test_correctness_with_gf2p10() {
+        test_correctness::<GF2p10>();
     }
 }

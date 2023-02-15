@@ -1,22 +1,20 @@
-use crate::arithmetic::{
-    bit_xor_assign, bitmul_accumulate, hash_bitvector_and_matrix, hash_matrix,
-};
+use crate::arithmetic::{bit_xor_assign, hash_bitvector_and_matrix, hash_matrix};
+use crate::field::BitMulAccumulate;
 use crate::gf2::{GF2Vector, GF2View};
-use crate::gf2psmall::GF2p8;
+use crate::gf2psmall::SmallGF;
 use crate::veccom::VecCom;
 use core::marker::PhantomData;
 use core::mem;
 use digest::XofReader;
 use digest::{Digest, Output as DigestOutput};
-use ff::Field;
 use itertools::izip;
 use ndarray::{s, Array1, Array2, ArrayView1, ArrayView2, Axis};
 use rand::{thread_rng, Rng, SeedableRng};
 use rand_chacha::ChaChaRng;
-// use blake3::{Hash as Blake3Hash, Hasher as Blake3Hasher};
 
 type Vector<T> = Array1<T>;
 type VectorView<'a, T> = ArrayView1<'a, T>;
+type Matrix<T> = Array2<T>;
 type MatrixView<'a, T> = ArrayView2<'a, T>;
 
 pub trait VoleInTheHeadSender {
@@ -60,11 +58,6 @@ pub trait VoleInTheHeadReceiver {
     fn get_output(&self) -> (VectorView<'_, Self::Field>, MatrixView<'_, Self::Field>);
 }
 
-type GF2p8Vector = Array1<GF2p8>;
-type GF2p8VectorView<'a> = ArrayView1<'a, GF2p8>;
-type GF2p8Matrix = Array2<GF2p8>;
-type GF2p8MatrixView<'a> = ArrayView2<'a, GF2p8>;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VoleInTheHeadSenderState {
     New,
@@ -74,25 +67,25 @@ enum VoleInTheHeadSenderState {
 }
 
 #[allow(non_snake_case)]
-pub struct VoleInTheHeadSenderFromVC<VC: VecCom, H: Digest = blake3::Hasher> {
+pub struct VoleInTheHeadSenderFromVC<F: SmallGF, VC: VecCom, H: Digest = blake3::Hasher> {
     vole_length: usize,
     num_repetitions: usize,
     state: VoleInTheHeadSenderState,
     u: GF2Vector,
-    V: GF2p8Matrix,
+    V: Matrix<F>,
     decommitment_keys: Vec<VC::DecommitmentKey>,
     _phantom_vc: PhantomData<VC>,
     _phantom_h: PhantomData<H>,
 }
 
-impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
+impl<F: SmallGF, VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<F, VC, H> {
     fn commit_impl(
         &mut self,
         message: Option<GF2Vector>,
     ) -> <Self as VoleInTheHeadSender>::Commitment {
         assert_eq!(self.state, VoleInTheHeadSenderState::New);
 
-        let log_q = GF2p8::LOG_ORDER;
+        let log_q = F::LOG_ORDER;
         let tau = self.num_repetitions;
         let ell_hat = self.vole_length + self.num_repetitions;
 
@@ -109,15 +102,15 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
             let u_0 = &mut self.u;
             xofs[0].read(u_0.bits.as_raw_mut_slice());
             let mut v_0 = self.V.row_mut(0);
-            debug_assert_eq!(xofs.len(), 256);
+            debug_assert_eq!(xofs.len(), F::ORDER);
             for (x, xof_x) in xofs.iter_mut().enumerate().skip(1) {
                 let mut r_x_0 = GF2Vector::with_capacity(ell_hat);
                 r_x_0.resize(ell_hat, false);
                 xof_x.read(r_x_0.as_raw_mut_slice());
                 bit_xor_assign(u_0, &r_x_0);
-                bitmul_accumulate(
+                BitMulAccumulate::bitmul_accumulate(
                     v_0.as_slice_mut().unwrap(),
-                    GF2p8(x as u8),
+                    F::from(x),
                     r_x_0.as_raw_slice(),
                 );
             }
@@ -144,15 +137,15 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
                 r_0_1
             };
             let mut v_i = self.V.row_mut(i);
-            debug_assert_eq!(xofs.len(), 256);
+            debug_assert_eq!(xofs.len(), F::ORDER);
             for (x, xof_x) in xofs.iter_mut().enumerate().skip(1) {
                 let mut r_x_i = GF2Vector::with_capacity(ell_hat);
                 r_x_i.resize(ell_hat, false);
                 xof_x.read(r_x_i.as_raw_mut_slice());
                 bit_xor_assign(&mut u_i, &r_x_i);
-                bitmul_accumulate(
+                BitMulAccumulate::bitmul_accumulate(
                     v_i.as_slice_mut().unwrap(),
-                    GF2p8(x as u8),
+                    F::from(x),
                     r_x_i.as_raw_slice(),
                 );
             }
@@ -166,7 +159,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSenderFromVC<VC, H> {
         {
             // reversed_axes consumes self, but we cannot move out of the &mut ref.
             // Hence, we do the swapping with a dummy value.
-            let mut tmp = GF2p8Matrix::default((1, 1));
+            let mut tmp = Matrix::<F>::default((1, 1));
             mem::swap(&mut tmp, &mut self.V);
             tmp = tmp.reversed_axes();
             mem::swap(&mut tmp, &mut self.V);
@@ -234,12 +227,14 @@ impl<F: bincode::Encode, H: Digest> bincode::Encode for Response<F, H> {
 }
 
 #[allow(non_snake_case)]
-impl<VC: VecCom, H: Digest> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC, H> {
+impl<F: SmallGF, VC: VecCom, H: Digest> VoleInTheHeadSender
+    for VoleInTheHeadSenderFromVC<F, VC, H>
+{
     type Commitment = Commitment<H>;
     type Challenge = Vector<Self::Field>;
     type Response = Response<Self::Field, H>;
     type Decommitment = Vec<VC::Decommitment>;
-    type Field = GF2p8;
+    type Field = F;
 
     const FIELD_SIZE: usize = 8;
 
@@ -250,7 +245,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC
             num_repetitions,
             state: VoleInTheHeadSenderState::New,
             u: GF2Vector::new(),
-            V: GF2p8Matrix::zeros((num_repetitions, ell_hat)),
+            V: Matrix::<F>::zeros((num_repetitions, ell_hat)),
             decommitment_keys: Vec::with_capacity(num_repetitions),
             _phantom_vc: PhantomData,
             _phantom_h: PhantomData,
@@ -278,7 +273,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC
                 .as_slice()
                 .expect("not in standard memory order")
                 .iter()
-                .map(|x| x.0)
+                .flat_map(|x| x.to_repr())
                 .collect::<Vec<u8>>(),
         );
 
@@ -294,18 +289,18 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadSender for VoleInTheHeadSenderFromVC<VC
     }
 
     #[allow(non_snake_case)]
-    fn decommit(&mut self, Deltas: GF2p8Vector) -> Self::Decommitment {
+    fn decommit(&mut self, Deltas: Vector<F>) -> Self::Decommitment {
         assert_eq!(
             self.state,
             VoleInTheHeadSenderState::RespondedToConsistencyChallenge
         );
         assert_eq!(Deltas.len(), self.num_repetitions);
-        let log_q = GF2p8::LOG_ORDER;
+        let log_q = F::LOG_ORDER;
         let decommitments = Deltas
             .iter()
             .zip(self.decommitment_keys.iter())
             .map(|(Delta_i, &decommitment_key)| {
-                VC::decommit(log_q, decommitment_key, Delta_i.0 as usize)
+                VC::decommit(log_q, decommitment_key, (*Delta_i).into())
             })
             .collect();
         self.state = VoleInTheHeadSenderState::Ready;
@@ -333,7 +328,7 @@ enum VoleInTheHeadReceiverState {
 }
 
 #[allow(non_snake_case)]
-pub struct VoleInTheHeadReceiverFromVC<VC: VecCom, H: Digest = blake3::Hasher> {
+pub struct VoleInTheHeadReceiverFromVC<F: SmallGF, VC: VecCom, H: Digest = blake3::Hasher> {
     vole_length: usize,
     num_repetitions: usize,
     state: VoleInTheHeadReceiverState,
@@ -341,22 +336,24 @@ pub struct VoleInTheHeadReceiverFromVC<VC: VecCom, H: Digest = blake3::Hasher> {
     random_commitment: bool,
     vc_commitment_hash: DigestOutput<H>,
     correction_values: Vec<GF2Vector>,
-    consistency_challenges: GF2p8Vector,
-    u_tilde: GF2p8Vector,
+    consistency_challenges: Vector<F>,
+    u_tilde: Vector<F>,
     V_tilde_hash: DigestOutput<H>,
-    final_challenges: GF2p8Vector,
-    W: GF2p8Matrix,
+    final_challenges: Vector<F>,
+    W: Matrix<F>,
     _phantom_vc: PhantomData<VC>,
     _phantom_h: PhantomData<H>,
 }
 
 #[allow(non_snake_case)]
-impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromVC<VC, H> {
+impl<F: SmallGF, VC: VecCom, H: Digest> VoleInTheHeadReceiver
+    for VoleInTheHeadReceiverFromVC<F, VC, H>
+{
     type Commitment = Commitment<H>;
     type Challenge = Vector<Self::Field>;
     type Response = Response<Self::Field, H>;
     type Decommitment = Vec<VC::Decommitment>;
-    type Field = GF2p8;
+    type Field = F;
 
     const FIELD_SIZE: usize = 8;
 
@@ -405,14 +402,12 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
         self.state = VoleInTheHeadReceiverState::CommitmentReceived;
     }
 
-    fn consistency_challenge_from_seed(num_repetitions: usize, seed: [u8; 32]) -> GF2p8Vector {
+    fn consistency_challenge_from_seed(num_repetitions: usize, seed: [u8; 32]) -> Vector<F> {
         let mut rng = ChaChaRng::from_seed(seed);
-        (0..num_repetitions)
-            .map(|_| GF2p8::random(&mut rng))
-            .collect()
+        (0..num_repetitions).map(|_| F::random(&mut rng)).collect()
     }
 
-    fn generate_consistency_challenge_from_seed(&mut self, seed: [u8; 32]) -> GF2p8Vector {
+    fn generate_consistency_challenge_from_seed(&mut self, seed: [u8; 32]) -> Vector<F> {
         assert_eq!(self.state, VoleInTheHeadReceiverState::CommitmentReceived);
         self.consistency_challenges =
             Self::consistency_challenge_from_seed(self.num_repetitions, seed);
@@ -420,7 +415,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
         self.consistency_challenges.clone()
     }
 
-    fn generate_consistency_challenge(&mut self) -> GF2p8Vector {
+    fn generate_consistency_challenge(&mut self) -> Vector<F> {
         self.generate_consistency_challenge_from_seed(thread_rng().gen())
     }
 
@@ -434,14 +429,12 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
         self.state = VoleInTheHeadReceiverState::ConsistencyChallengeResponseReceived;
     }
 
-    fn final_challenge_from_seed(num_repetitions: usize, seed: [u8; 32]) -> GF2p8Vector {
+    fn final_challenge_from_seed(num_repetitions: usize, seed: [u8; 32]) -> Vector<F> {
         let mut rng = ChaChaRng::from_seed(seed);
-        (0..num_repetitions)
-            .map(|_| GF2p8::random(&mut rng))
-            .collect()
+        (0..num_repetitions).map(|_| F::random(&mut rng)).collect()
     }
 
-    fn generate_final_challenge_from_seed(&mut self, seed: [u8; 32]) -> GF2p8Vector {
+    fn generate_final_challenge_from_seed(&mut self, seed: [u8; 32]) -> Vector<F> {
         assert_eq!(
             self.state,
             VoleInTheHeadReceiverState::ConsistencyChallengeResponseReceived
@@ -451,7 +444,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
         self.final_challenges.clone()
     }
 
-    fn generate_final_challenge(&mut self) -> GF2p8Vector {
+    fn generate_final_challenge(&mut self) -> Vector<F> {
         self.generate_final_challenge_from_seed(thread_rng().gen())
     }
 
@@ -462,9 +455,9 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
         );
         let tau = self.num_repetitions;
         let ell_hat = self.vole_length + self.num_repetitions;
-        let log_q = GF2p8::LOG_ORDER;
+        let log_q = F::LOG_ORDER;
 
-        let mut W = GF2p8Matrix::zeros((tau, ell_hat));
+        let mut W = Matrix::<F>::zeros((tau, ell_hat));
 
         let mut r_x_i = GF2Vector::with_capacity(ell_hat);
         r_x_i.resize(ell_hat, false);
@@ -475,14 +468,14 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
         {
             let Delta_0 = self.final_challenges[0];
             let (recomputed_commitment, mut xofs) =
-                VC::recompute_commitment(log_q, &decommitments[0], Delta_0.0 as usize);
+                VC::recompute_commitment(log_q, &decommitments[0], Delta_0.into());
             hasher.update(recomputed_commitment.as_ref());
             let mut w_0 = W.row_mut(0);
-            debug_assert_eq!(xofs.len(), 256);
+            debug_assert_eq!(xofs.len(), F::ORDER);
             for (x, xof_x) in xofs.iter_mut().enumerate() {
                 xof_x.read(r_x_i.as_raw_mut_slice());
-                let Delta_0_minus_x = Delta_0 - GF2p8(x as u8);
-                bitmul_accumulate(
+                let Delta_0_minus_x = Delta_0 - F::from(x);
+                BitMulAccumulate::bitmul_accumulate(
                     w_0.as_slice_mut().unwrap(),
                     Delta_0_minus_x,
                     r_x_i.as_raw_slice(),
@@ -492,7 +485,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
             if !self.random_commitment {
                 debug_assert_eq!(self.correction_values.len(), self.num_repetitions);
                 debug_assert_eq!(self.correction_values[0].len(), self.vole_length);
-                bitmul_accumulate(
+                BitMulAccumulate::bitmul_accumulate(
                     &mut w_0.as_slice_mut().unwrap()[..self.vole_length],
                     Delta_0,
                     self.correction_values[0].as_raw_slice(),
@@ -515,21 +508,21 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
         {
             // for i in 1..tau {
             let (recomputed_commitment, mut xofs) =
-                VC::recompute_commitment(log_q, decommitment_i, Delta_i.0 as usize);
+                VC::recompute_commitment(log_q, decommitment_i, Delta_i.into());
             hasher.update(recomputed_commitment.as_ref());
             let mut w_i = W.row_mut(i);
-            debug_assert_eq!(xofs.len(), 256);
+            debug_assert_eq!(xofs.len(), F::ORDER);
             for (x, xof_x) in xofs.iter_mut().enumerate() {
                 xof_x.read(r_x_i.as_raw_mut_slice());
-                let Delta_i_minus_x = Delta_i - GF2p8(x as u8);
-                bitmul_accumulate(
+                let Delta_i_minus_x = Delta_i - F::from(x);
+                BitMulAccumulate::bitmul_accumulate(
                     w_i.as_slice_mut().unwrap(),
                     Delta_i_minus_x,
                     r_x_i.as_raw_slice(),
                 );
             }
 
-            bitmul_accumulate(
+            BitMulAccumulate::bitmul_accumulate(
                 w_i.as_slice_mut().unwrap(),
                 Delta_i,
                 correction_value_i.as_raw_slice(),
@@ -556,7 +549,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
             rhs.as_slice()
                 .expect("not in standard memory order")
                 .iter()
-                .map(|x| x.0)
+                .flat_map(|x| x.to_repr())
                 .collect::<Vec<u8>>(),
         );
         assert_eq!(self.V_tilde_hash, rw_hash);
@@ -569,7 +562,7 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
         }
     }
 
-    fn get_output(&self) -> (GF2p8VectorView, GF2p8MatrixView) {
+    fn get_output(&self) -> (VectorView<F>, MatrixView<F>) {
         assert_eq!(self.state, VoleInTheHeadReceiverState::Ready);
         let tau = self.num_repetitions;
         let ell = self.vole_length;
@@ -586,18 +579,19 @@ impl<VC: VecCom, H: Digest> VoleInTheHeadReceiver for VoleInTheHeadReceiverFromV
 mod tests {
     use super::*;
     use crate::common::Block128;
+    use crate::gf2psmall::{GF2p10, GF2p8};
     use crate::primitives::{Aes128CtrLdPrg, Blake3LE};
     use crate::veccom::GgmVecCom;
     use blake3;
     use rand::{thread_rng, Rng};
 
-    fn test_voleith_correctness_with_param<const RANDOM: bool>() {
+    fn test_voleith_correctness_with_param<F: SmallGF, const RANDOM: bool>() {
         let vole_length = 16;
         let num_repetitions = 5;
         type VC = GgmVecCom<Block128, Aes128CtrLdPrg, blake3::Hasher, Blake3LE<Block128>>;
 
-        let mut sender = VoleInTheHeadSenderFromVC::<VC>::new(vole_length, num_repetitions);
-        let mut receiver = VoleInTheHeadReceiverFromVC::<VC>::new(vole_length, num_repetitions);
+        let mut sender = VoleInTheHeadSenderFromVC::<F, VC>::new(vole_length, num_repetitions);
+        let mut receiver = VoleInTheHeadReceiverFromVC::<F, VC>::new(vole_length, num_repetitions);
 
         let messages = if RANDOM {
             Default::default()
@@ -643,12 +637,22 @@ mod tests {
     }
 
     #[test]
-    fn test_voleith_correctness_with_msg() {
-        test_voleith_correctness_with_param::<false>();
+    fn test_voleith_correctness_with_msg_gf2p8() {
+        test_voleith_correctness_with_param::<GF2p8, false>();
     }
 
     #[test]
-    fn test_voleith_correctness_random() {
-        test_voleith_correctness_with_param::<true>();
+    fn test_voleith_correctness_random_gf2p8() {
+        test_voleith_correctness_with_param::<GF2p8, true>();
+    }
+
+    #[test]
+    fn test_voleith_correctness_with_msg_gf2p10() {
+        test_voleith_correctness_with_param::<GF2p10, false>();
+    }
+
+    #[test]
+    fn test_voleith_correctness_random_gf2p10() {
+        test_voleith_correctness_with_param::<GF2p10, true>();
     }
 }

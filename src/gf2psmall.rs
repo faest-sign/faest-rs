@@ -1,5 +1,7 @@
 // use crate::arithmetic::{clmul_u8, clmul_u8_x86};
-use crate::field::{BytesRepr, InnerProduct};
+use crate::arithmetic::{bitmul_accumulate_u16, bitmul_accumulate_u8};
+use crate::field::{BitMulAccumulate, BytesRepr, InnerProduct, VecToGF2p128};
+use crate::gf2p128::GF2p128Fast;
 use core::arch::x86_64::*;
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -8,7 +10,19 @@ use num_traits::identities::{One, Zero};
 use rand::{Rng, RngCore};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
-pub trait SmallGF {
+pub trait SmallGF:
+    Clone
+    + Field
+    + Zero
+    + One
+    + Div<Output = Self>
+    + BytesRepr
+    + BitMulAccumulate
+    + From<usize>
+    + Into<usize>
+    + VecToGF2p128<GF2p128Fast>
+    + bincode::Encode
+{
     const ORDER: usize;
     const LOG_ORDER: u32;
 }
@@ -4486,8 +4500,21 @@ macro_rules! impl_small_gf {
         }
 
         impl From<$field_name> for $base_type {
-            fn from(val: $field_name) -> $base_type {
+            fn from(val: $field_name) -> Self {
                 val.0
+            }
+        }
+
+        impl From<usize> for $field_name {
+            fn from(val: usize) -> Self {
+                debug_assert!(val <= <$base_type>::MAX as usize);
+                Self(val as $base_type)
+            }
+        }
+
+        impl From<$field_name> for usize {
+            fn from(val: $field_name) -> Self {
+                val.0 as usize
             }
         }
 
@@ -4500,6 +4527,32 @@ impl_small_gf!(GF2p8, u8);
 impl_small_gf!(GF2p9, u16);
 impl_small_gf!(GF2p10, u16);
 impl_small_gf!(GF2p11, u16);
+
+impl BitMulAccumulate for GF2p7 {
+    fn bitmul_accumulate(ys: &mut [Self], x: Self, bs: &[u8]) {
+        unsafe { bitmul_accumulate_u8(ys, x, bs) }
+    }
+}
+impl BitMulAccumulate for GF2p8 {
+    fn bitmul_accumulate(ys: &mut [Self], x: Self, bs: &[u8]) {
+        unsafe { bitmul_accumulate_u8(ys, x, bs) }
+    }
+}
+impl BitMulAccumulate for GF2p9 {
+    fn bitmul_accumulate(ys: &mut [Self], x: Self, bs: &[u8]) {
+        unsafe { bitmul_accumulate_u16(ys, x, bs) }
+    }
+}
+impl BitMulAccumulate for GF2p10 {
+    fn bitmul_accumulate(ys: &mut [Self], x: Self, bs: &[u8]) {
+        unsafe { bitmul_accumulate_u16(ys, x, bs) }
+    }
+}
+impl BitMulAccumulate for GF2p11 {
+    fn bitmul_accumulate(ys: &mut [Self], x: Self, bs: &[u8]) {
+        unsafe { bitmul_accumulate_u16(ys, x, bs) }
+    }
+}
 
 // impl Mul for GF2p8 {
 //     type Output = Self;

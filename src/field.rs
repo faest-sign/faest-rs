@@ -28,7 +28,7 @@ pub trait InnerProduct<A = Self> {
 }
 
 pub trait BytesRepr {
-    type Repr: AsRef<[u8]> + AsMut<[u8]>;
+    type Repr: AsRef<[u8]> + AsMut<[u8]> + IntoIterator<Item = u8>;
     fn to_repr(self) -> Self::Repr;
     fn from_repr(repr: Self::Repr) -> Self;
 }
@@ -36,4 +36,8 @@ pub trait BytesRepr {
 pub trait VecToGF2p128<F>: Sized {
     const VECTOR_SIZE: usize;
     fn convert(vec: &[Self]) -> F;
+}
+
+pub trait BitMulAccumulate: Sized {
+    fn bitmul_accumulate(ys: &mut [Self], x: Self, bs: &[u8]);
 }

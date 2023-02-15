@@ -1,6 +1,6 @@
 use crate::arithmetic::clmul_u64;
 use crate::field::{BytesRepr, InnerProduct, LazyField, LazyMul, UnreducedField, VecToGF2p128};
-use crate::gf2psmall::GF2p8;
+use crate::gf2psmall::{GF2p10, GF2p11, GF2p7, GF2p8, GF2p9};
 use core::arch::x86_64::*;
 use core::fmt;
 use core::iter::{Product, Sum};
@@ -550,7 +550,7 @@ impl VecToGF2p128<GF2p128Naive> for GF2p8 {
     const VECTOR_SIZE: usize = 16;
     fn convert(vec: &[Self]) -> GF2p128Naive {
         debug_assert_eq!(vec.len(), <Self as VecToGF2p128<GF2p128Naive>>::VECTOR_SIZE);
-        let mut bytes = [0u8; <Self as VecToGF2p128<GF2p128Naive>>::VECTOR_SIZE];
+        let mut bytes = <GF2p128Naive as BytesRepr>::Repr::default();
         for (b, x) in bytes.iter_mut().zip(vec.iter()) {
             *b = x.0;
         }
@@ -561,13 +561,35 @@ impl VecToGF2p128<GF2p128Fast> for GF2p8 {
     const VECTOR_SIZE: usize = 16;
     fn convert(vec: &[Self]) -> GF2p128Fast {
         debug_assert_eq!(vec.len(), <Self as VecToGF2p128<GF2p128Fast>>::VECTOR_SIZE);
-        let mut bytes = [0u8; <Self as VecToGF2p128<GF2p128Fast>>::VECTOR_SIZE];
+        let mut bytes = <GF2p128Fast as BytesRepr>::Repr::default();
         for (b, x) in bytes.iter_mut().zip(vec.iter()) {
             *b = x.0;
         }
         GF2p128Fast::from_repr(bytes)
     }
 }
+
+macro_rules! impl_vec_to_gf2p128 {
+    (
+        $field_name:ident
+    ) => {
+        impl VecToGF2p128<GF2p128Fast> for $field_name {
+            const VECTOR_SIZE: usize = (128 + 7) / Self::LOG_ORDER as usize;
+            fn convert(vec: &[Self]) -> GF2p128Fast {
+                debug_assert_eq!(vec.len(), <Self as VecToGF2p128<GF2p128Fast>>::VECTOR_SIZE);
+                let mut z = 0u128;
+                for (i, x) in vec.iter().enumerate() {
+                    z |= (x.0 as u128) << (Self::LOG_ORDER as usize * i);
+                }
+                GF2p128Fast::from_repr(z.to_le_bytes())
+            }
+        }
+    };
+}
+impl_vec_to_gf2p128!(GF2p7);
+impl_vec_to_gf2p128!(GF2p9);
+impl_vec_to_gf2p128!(GF2p10);
+impl_vec_to_gf2p128!(GF2p11);
 
 impl_additional_field_arithmetic!(GF2p128Naive);
 impl_additional_field_arithmetic!(GF2p128Fast);

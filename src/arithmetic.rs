@@ -1,5 +1,6 @@
+use crate::field::BytesRepr;
 use crate::gf2::{GF2Vector, GF2View};
-use crate::gf2psmall::GF2p8;
+use crate::gf2psmall::SmallGF;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -46,18 +47,18 @@ pub fn clmul_u8_x86(x: u8, y: u8) -> u32 {
     }
 }
 
-type GF2p8Vector = Array1<GF2p8>;
-type GF2p8VectorView<'a> = ArrayView1<'a, GF2p8>;
-type GF2p8Matrix = Array2<GF2p8>;
-type GF2p8MatrixView<'a> = ArrayView2<'a, GF2p8>;
+type Vector<F> = Array1<F>;
+type VectorView<'a, F> = ArrayView1<'a, F>;
+type Matrix<F> = Array2<F>;
+type MatrixView<'a, F> = ArrayView2<'a, F>;
 
-pub fn hash_bitvector(r: GF2p8VectorView, v: &GF2View) -> GF2p8Vector {
+pub fn hash_bitvector<F: SmallGF>(r: VectorView<F>, v: &GF2View) -> Vector<F> {
     let tau = r.len();
     let mut r_powers = r.to_owned();
     let mut h = if v[0] {
-        GF2p8Vector::ones(tau)
+        Vector::ones(tau)
     } else {
-        GF2p8Vector::zeros(tau)
+        Vector::zeros(tau)
     };
     if v[1] {
         h += &r;
@@ -73,7 +74,7 @@ pub fn hash_bitvector(r: GF2p8VectorView, v: &GF2View) -> GF2p8Vector {
 }
 
 #[allow(non_snake_case)]
-pub fn hash_matrix(r: GF2p8VectorView, M: GF2p8MatrixView) -> GF2p8Matrix {
+pub fn hash_matrix<F: SmallGF>(r: VectorView<F>, M: MatrixView<F>) -> Matrix<F> {
     let tau = r.len();
     let n = M.shape()[0];
     let m = M.shape()[1];
@@ -95,16 +96,16 @@ pub fn hash_matrix(r: GF2p8VectorView, M: GF2p8MatrixView) -> GF2p8Matrix {
 }
 
 #[allow(non_snake_case)]
-pub fn hash_bitvector_and_matrix(
-    r: GF2p8VectorView,
+pub fn hash_bitvector_and_matrix<F: SmallGF>(
+    r: VectorView<F>,
     v: &GF2View,
-    M: GF2p8MatrixView,
-) -> (GF2p8Vector, GF2p8Matrix) {
+    M: MatrixView<F>,
+) -> (Vector<F>, Matrix<F>) {
     // TODO: optimize
     (hash_bitvector(r, v), hash_matrix(r, M))
 }
 
-const fn gen_mask_table() -> [u64; 256] {
+const fn gen_mask_table_u8() -> [u64; 256] {
     const fn f(x: u8) -> u64 {
         let mut m = 0;
         let mut i = 0;
@@ -125,10 +126,40 @@ const fn gen_mask_table() -> [u64; 256] {
     table
 }
 
-const MASK_TABLE: [u64; 256] = gen_mask_table();
+const fn gen_mask_table_u16() -> [u128; 256] {
+    const fn f(x: u8) -> u128 {
+        let mut m = 0;
+        let mut i = 0;
+        while i < 8 {
+            if x & (1 << i) != 0 {
+                m |= 0xffff << (i * 16);
+            }
+            i += 1;
+        }
+        m
+    }
+    let mut table = [0; 256];
+    let mut x = 0;
+    while x < 256 {
+        table[x] = f(x as u8);
+        x += 1;
+    }
+    table
+}
 
-/// Compute y_i += x * b_i for i = 0..
-pub fn bitmul_accumulate(ys: &mut [GF2p8], x: GF2p8, bs: &[u8]) {
+const MASK_TABLE_U8: [u64; 256] = gen_mask_table_u8();
+const MASK_TABLE_U16: [u128; 256] = gen_mask_table_u16();
+
+/// Compute y_i += x * b_i for i = 0.. for <= 8 bit fields
+///
+/// # Safety
+/// TODO
+#[target_feature(enable = "avx2")]
+pub unsafe fn bitmul_accumulate_u8<F: SmallGF>(ys: &mut [F], x: F, bs: &[u8])
+where
+    F: SmallGF,
+    F: BytesRepr<Repr = [u8; 1]>,
+{
     let n = ys.len();
     debug_assert!(
         (bs.len() * 8 - 7 <= n) && (n <= bs.len() * 8),
@@ -139,27 +170,31 @@ pub fn bitmul_accumulate(ys: &mut [GF2p8], x: GF2p8, bs: &[u8]) {
 
     let n_blocks = n / 16;
 
-    let xs = u128::from_le_bytes([x.0; 16]);
-    // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 16B
-    // blocks in the array.
-    let xmm_slice =
-        unsafe { std::slice::from_raw_parts_mut(ys.as_mut_ptr() as *mut u128, n_blocks) };
-    // TODO: maybe rewrite this with simd intrinsics
-    for j in 0..n_blocks {
-        let mask_lo = MASK_TABLE[bs[2 * j] as usize] as u128;
-        let mask_hi = MASK_TABLE[bs[2 * j + 1] as usize] as u128;
-        let mask = mask_hi << 64 | mask_lo;
-        xmm_slice[j] ^= mask & xs;
+    let x_as_byte = x.to_repr()[0];
+
+    unsafe {
+        let xs = _mm_set1_epi8(x_as_byte as i8);
+        // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 16B
+        // blocks in the array.
+        let xmm_ptr = ys.as_mut_ptr() as *mut __m128i;
+        for j in 0..n_blocks {
+            let mask = [
+                MASK_TABLE_U8[bs[2 * j] as usize],
+                MASK_TABLE_U8[bs[2 * j + 1] as usize],
+            ];
+            let mask = _mm_loadu_si128(mask.as_ptr() as *const __m128i);
+            let xmm_word = _mm_loadu_si128(xmm_ptr.add(j));
+            let xmm_word = _mm_xor_si128(xmm_word, _mm_and_si128(mask, xs));
+            _mm_storeu_si128(xmm_ptr.add(j), xmm_word);
+        }
     }
 
     if n & 8 != 0 {
-        let xs = u64::from_le_bytes([x.0; 8]);
+        let xs = u64::from_le_bytes([x_as_byte; 8]);
         // This cast is also fine, since the remainder of the array is more than 8B big.
-        let q_slice = unsafe {
-            std::slice::from_raw_parts_mut(ys.as_mut_ptr() as *mut u64, 2 * n_blocks + 1)
-        };
-        let mask = MASK_TABLE[bs[2 * n_blocks] as usize];
-        q_slice[2 * n_blocks] ^= mask & xs;
+        let q_ptr = unsafe { (ys.as_mut_ptr() as *mut u64).add(2 * n_blocks) };
+        let mask = MASK_TABLE_U8[bs[2 * n_blocks] as usize];
+        *q_ptr ^= mask & xs;
     }
 
     if n & 7 != 0 {
@@ -173,7 +208,71 @@ pub fn bitmul_accumulate(ys: &mut [GF2p8], x: GF2p8, bs: &[u8]) {
     }
 }
 
-pub fn bitmul_accumulate_naive(ys: &mut [GF2p8], x: GF2p8, bs: &[u8]) {
+/// Compute y_i += x * b_i for i = 0.. for 9..16 bit fields
+///
+/// # Safety
+/// TODO
+#[target_feature(enable = "avx2")]
+pub unsafe fn bitmul_accumulate_u16<F: SmallGF>(ys: &mut [F], x: F, bs: &[u8])
+where
+    F: SmallGF,
+    F: BytesRepr<Repr = [u8; 2]>,
+{
+    let n = ys.len();
+    debug_assert!(
+        (bs.len() * 8 - 7 <= n) && (n <= bs.len() * 8),
+        "ys.len() = {}, but bs.len() * 8 = {}",
+        ys.len(),
+        bs.len() * 8
+    );
+
+    let n_blocks = n / 16;
+
+    let x_as_word = u16::from_le_bytes(x.to_repr());
+
+    unsafe {
+        let xs = _mm256_set1_epi16(x_as_word as i16);
+        // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 32B
+        // blocks in the array.
+        let ymm_ptr = ys.as_mut_ptr() as *mut __m256i;
+        for j in 0..n_blocks {
+            let mask = [
+                MASK_TABLE_U16[bs[2 * j] as usize],
+                MASK_TABLE_U16[bs[2 * j + 1] as usize],
+            ];
+            let mask = _mm256_loadu_si256(mask.as_ptr() as *const __m256i);
+            let ymm_word = _mm256_loadu_si256(ymm_ptr.add(j));
+            let ymm_word = _mm256_xor_si256(ymm_word, _mm256_and_si256(mask, xs));
+            _mm256_storeu_si256(ymm_ptr.add(j), ymm_word);
+        }
+    }
+
+    if n & 8 != 0 {
+        unsafe {
+            let xs = _mm_set1_epi16(x_as_word as i16);
+            // This cast is also fine, since the remainder of the array is more than 16B big.
+            let xmm_ptr = (ys.as_mut_ptr() as *mut __m128i).add(2 * n_blocks);
+            let mask = _mm_loadu_si128(
+                [MASK_TABLE_U16[bs[2 * n_blocks] as usize]].as_ptr() as *const __m128i
+            );
+            let xmm_word = _mm_loadu_si128(xmm_ptr);
+            let xmm_word = _mm_xor_si128(xmm_word, _mm_and_si128(mask, xs));
+            _mm_storeu_si128(xmm_ptr, xmm_word);
+        }
+    }
+
+    if n & 7 != 0 {
+        let start_idx = n & !7;
+        for i in 0..(n & 7) {
+            let last_bs = bs.last().unwrap();
+            if last_bs & (1 << i) != 0 {
+                ys[start_idx + i] += x;
+            }
+        }
+    }
+}
+
+pub fn bitmul_accumulate_naive<F: SmallGF>(ys: &mut [F], x: F, bs: &[u8]) {
     let n = ys.len();
     debug_assert!(
         (bs.len() * 8 - 7 <= n) && (n <= bs.len() * 8),
@@ -209,6 +308,7 @@ pub fn bit_xor_assign_naive(ys: &mut GF2Vector, xs: &GF2Vector) {
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
+    use crate::gf2psmall::{GF2p10, GF2p8};
     use ff::Field;
     use rand::{thread_rng, Rng};
 
@@ -235,7 +335,7 @@ mod tests {
         let n = 5;
         let m = 3;
 
-        let r = GF2p8Vector::from(vec![
+        let r = Vector::from(vec![
             GF2p8(0xf5),
             GF2p8(0xe8),
             GF2p8(0x13),
@@ -247,7 +347,7 @@ mod tests {
         let v = GF2Vector {
             bits: [true, true, false, false, true].iter().collect(),
         };
-        let M = GF2p8Matrix::from_shape_vec(
+        let M = Matrix::from_shape_vec(
             (n, m),
             vec![
                 GF2p8(0x25),
@@ -268,7 +368,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let Rv = GF2p8Vector::from(vec![
+        let Rv = Vector::from(vec![
             GF2p8(0x51),
             GF2p8(0xa3),
             GF2p8(0x5d),
@@ -277,7 +377,7 @@ mod tests {
             GF2p8(0x51),
             GF2p8(0x49),
         ]);
-        let RM = GF2p8Matrix::from_shape_vec(
+        let RM = Matrix::from_shape_vec(
             (tau, m),
             vec![
                 GF2p8(0x8f),
@@ -313,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bitmul_accumulate() {
+    fn test_bitmul_accumulate_u8() {
         let n = 16 + 8 + 3;
         let x = GF2p8::random(thread_rng());
         let mut ys_1: Vec<_> = (0..n).map(|_| GF2p8::random(thread_rng())).collect();
@@ -323,7 +423,26 @@ mod tests {
         thread_rng().fill(bs.as_raw_mut_slice());
 
         bitmul_accumulate_naive(&mut ys_1, x, bs.as_raw_slice());
-        bitmul_accumulate(&mut ys_2, x, bs.as_raw_slice());
+        unsafe {
+            bitmul_accumulate_u8(&mut ys_2, x, bs.as_raw_slice());
+        }
+        assert_eq!(ys_1, ys_2);
+    }
+
+    #[test]
+    fn test_bitmul_accumulate_u16() {
+        let n = 16 + 8 + 3;
+        let x = GF2p10::random(thread_rng());
+        let mut ys_1: Vec<_> = (0..n).map(|_| GF2p10::random(thread_rng())).collect();
+        let mut ys_2 = ys_1.clone();
+        let mut bs = GF2Vector::with_capacity(n);
+        bs.bits.resize(n, false);
+        thread_rng().fill(bs.as_raw_mut_slice());
+
+        bitmul_accumulate_naive(&mut ys_1, x, bs.as_raw_slice());
+        unsafe {
+            bitmul_accumulate_u16(&mut ys_2, x, bs.as_raw_slice());
+        }
         assert_eq!(ys_1, ys_2);
     }
 

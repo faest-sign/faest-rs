@@ -24,10 +24,10 @@ type VC = veccom::GgmVecCom<
     primitives::Blake3LE<common::Block128>,
 >;
 pub type FaestProver = faest::FaestProverFromHC<
-    homcom::HomCom128SenderFromVitH<voleith::VoleInTheHeadSenderFromVC<VC>>,
+    homcom::HomCom128SenderFromVitH<voleith::VoleInTheHeadSenderFromVC<gf2psmall::GF2p8, VC>>,
 >;
 pub type FaestVerifier = faest::FaestVerifierFromHC<
-    homcom::HomCom128ReceiverFromVitH<voleith::VoleInTheHeadReceiverFromVC<VC>>,
+    homcom::HomCom128ReceiverFromVitH<voleith::VoleInTheHeadReceiverFromVC<gf2psmall::GF2p8, VC>>,
 >;
 
 pub type FaestSignature = fiat_shamir::FsSignature<FaestProver>;
