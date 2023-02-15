@@ -1,5 +1,5 @@
 macro_rules! impl_additional_field_arithmetic {
-    ($field_name:ident, $unreduced_field_name:ident) => {
+    ($field_name:ident) => {
         impl Add<&Self> for $field_name {
             type Output = Self;
             #[inline(always)]
@@ -104,14 +104,6 @@ macro_rules! impl_additional_field_arithmetic {
                 *self += other
             }
         }
-        #[allow(clippy::suspicious_arithmetic_impl)]
-        impl Sub<<$field_name as LazyField>::UF> for $field_name {
-            type Output = <$field_name as LazyField>::UF;
-            #[inline(always)]
-            fn sub(self, other: <$field_name as LazyField>::UF) -> Self::Output {
-                self + other
-            }
-        }
         impl Sum for $field_name {
             #[inline(always)]
             fn sum<I>(iter: I) -> Self
@@ -130,25 +122,6 @@ macro_rules! impl_additional_field_arithmetic {
                 iter.copied().sum()
             }
         }
-        impl Sum for $unreduced_field_name {
-            #[inline(always)]
-            fn sum<I>(iter: I) -> Self
-            where
-                I: Iterator<Item = Self>,
-            {
-                iter.fold(Self::ZERO, Add::add)
-            }
-        }
-        impl<'a> Sum<&'a Self> for $unreduced_field_name {
-            #[inline(always)]
-            fn sum<I>(iter: I) -> Self
-            where
-                I: Iterator<Item = &'a Self>,
-            {
-                iter.copied().sum()
-            }
-        }
-
         impl Product for $field_name {
             #[inline(always)]
             fn product<I>(iter: I) -> Self
@@ -176,9 +149,8 @@ macro_rules! impl_additional_field_arithmetic {
             {
                 iter1
                     .zip(iter2)
-                    .map(|(x, y)| LazyMul::lazy_mul(x, y))
-                    .sum::<<$field_name as LazyMul>::Output>()
-                    .reduce()
+                    .map(|(x, y)| Mul::mul(x, y))
+                    .sum::<$field_name>()
             }
         }
         impl<'a> InnerProduct<&'a Self> for $field_name {

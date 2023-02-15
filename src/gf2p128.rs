@@ -390,6 +390,61 @@ impl Mul for GF2p128Fast {
         Self(Self::reduce(Self::gfmul(self.0, other.0)))
     }
 }
+
+#[allow(clippy::suspicious_arithmetic_impl)]
+impl Sub<UnreducedGF2p128Naive> for GF2p128Naive {
+    type Output = UnreducedGF2p128Naive;
+    #[inline(always)]
+    fn sub(self, other: UnreducedGF2p128Naive) -> Self::Output {
+        self + other
+    }
+}
+#[allow(clippy::suspicious_arithmetic_impl)]
+impl Sub<UnreducedGF2p128Fast> for GF2p128Fast {
+    type Output = UnreducedGF2p128Fast;
+    #[inline(always)]
+    fn sub(self, other: UnreducedGF2p128Fast) -> Self::Output {
+        self + other
+    }
+}
+
+impl Sum for UnreducedGF2p128Fast {
+    #[inline(always)]
+    fn sum<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = Self>,
+    {
+        iter.fold(Self::ZERO, Add::add)
+    }
+}
+impl<'a> Sum<&'a Self> for UnreducedGF2p128Fast {
+    #[inline(always)]
+    fn sum<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = &'a Self>,
+    {
+        iter.copied().sum()
+    }
+}
+impl Sum for UnreducedGF2p128Naive {
+    #[inline(always)]
+    fn sum<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = Self>,
+    {
+        iter.fold(Self::ZERO, Add::add)
+    }
+}
+impl<'a> Sum<&'a Self> for UnreducedGF2p128Naive {
+    #[inline(always)]
+    fn sum<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = &'a Self>,
+    {
+        iter.copied().sum()
+    }
+}
+
 impl ConstantTimeEq for GF2p128Naive {
     #[inline(always)]
     fn ct_eq(&self, other: &Self) -> Choice {
@@ -514,8 +569,8 @@ impl VecToGF2p128<GF2p128Fast> for GF2p8 {
     }
 }
 
-impl_additional_field_arithmetic!(GF2p128Naive, UnreducedGF2p128Naive);
-impl_additional_field_arithmetic!(GF2p128Fast, UnreducedGF2p128Fast);
+impl_additional_field_arithmetic!(GF2p128Naive);
+impl_additional_field_arithmetic!(GF2p128Fast);
 
 #[cfg(test)]
 mod tests {

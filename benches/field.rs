@@ -1,13 +1,14 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ff::Field;
-use homcomzk::field::{InnerProduct, LazyField};
-use homcomzk::gf2p128::{GF2p128, GF2p128Fast};
-use homcomzk::gf2psmall::GF2p8;
+use homcomzk::field::InnerProduct;
+use homcomzk::gf2p128::GF2p128Fast;
+// use homcomzk::gf2p128::GF2p128Naive;
+use homcomzk::gf2psmall::{GF2p10, GF2p11, GF2p7, GF2p8, GF2p9};
 use rand::thread_rng;
 
 fn bench_field<F>(name: &str, c: &mut Criterion)
 where
-    F: Field + LazyField + for<'a> InnerProduct<&'a F>,
+    F: Field + for<'a> InnerProduct<&'a F>,
 {
     let mut g = c.benchmark_group(name);
     let n = 1000;
@@ -21,11 +22,6 @@ where
         let x = F::random(thread_rng());
         let y = F::random(thread_rng());
         b.iter(|| black_box(x * y));
-    });
-    g.bench_function("lazy_mul", |b| {
-        let x = F::random(thread_rng());
-        let y = F::random(thread_rng());
-        b.iter(|| black_box(x.lazy_mul(y)));
     });
     g.bench_function("invert", |b| {
         let x = F::random(thread_rng());
@@ -71,17 +67,42 @@ where
     });
 }
 
+fn bench_gf2p7(c: &mut Criterion) {
+    bench_field::<GF2p7>("gf2p7", c)
+}
+
 fn bench_gf2p8(c: &mut Criterion) {
     bench_field::<GF2p8>("gf2p8", c)
 }
 
-fn bench_gf2p128(c: &mut Criterion) {
-    bench_field::<GF2p128>("gf2p128", c)
+fn bench_gf2p9(c: &mut Criterion) {
+    bench_field::<GF2p9>("gf2p9", c)
 }
+
+fn bench_gf2p10(c: &mut Criterion) {
+    bench_field::<GF2p10>("gf2p10", c)
+}
+
+fn bench_gf2p11(c: &mut Criterion) {
+    bench_field::<GF2p11>("gf2p11", c)
+}
+
+// fn bench_gf2p128(c: &mut Criterion) {
+//     bench_field::<GF2p128Naive>("gf2p128-naive", c)
+// }
 
 fn bench_gf2p128_fast(c: &mut Criterion) {
     bench_field::<GF2p128Fast>("gf2p128-fast", c)
 }
 
-criterion_group!(benches, bench_gf2p8, bench_gf2p128, bench_gf2p128_fast);
+criterion_group!(
+    benches,
+    bench_gf2p7,
+    bench_gf2p8,
+    bench_gf2p9,
+    bench_gf2p10,
+    bench_gf2p11,
+    // bench_gf2p128,
+    bench_gf2p128_fast
+);
 criterion_main!(benches);

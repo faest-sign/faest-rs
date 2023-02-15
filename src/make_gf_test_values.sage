@@ -36,11 +36,11 @@ g11 = y11
 H = Hom(K8, L)
 f = FiniteFieldHomomorphism_generic(H)
 
-K8_values =  [
-    K.from_integer(0x4b), K.from_integer(0x27), K.from_integer(0xb1), K.from_integer(0xfc),
-]
 K7_values =  [
     K7.from_integer(0x7f), K7.from_integer(0x65), K7.from_integer(0x59), K7.from_integer(0x71)
+]
+K8_values =  [
+    K8.from_integer(0x4b), K8.from_integer(0x27), K8.from_integer(0xb1), K8.from_integer(0xfc),
 ]
 K9_values =  [
     K9.from_integer(0x12a), K9.from_integer(0x1f4), K9.from_integer(0x1a7), K9.from_integer(0x02b)
@@ -52,7 +52,7 @@ K11_values =  [
     K11.from_integer(0x1fb), K11.from_integer(0x113), K11.from_integer(0x112), K11.from_integer(0x544)
 ]
 
-def make_tables(name, K, g, K_values):
+def make_tables(name, K, g, values):
     if len(K) <= 256:
         bitlen = 8
         hexlen = 2
@@ -65,20 +65,18 @@ def make_tables(name, K, g, K_values):
     name_caps = name.upper()
 
     log_table = [0] + [
-        log(K.from_integer(i), g) for i in range(1, 256)
+        log(K.from_integer(i), g) for i in range(1, len(K))
     ]
-    anti_log_table = [g^i for i in range(255)]
+    anti_log_table = [g^i for i in range(len(K) - 1)]
 
-    code_tables = '''
-        const LOG_TABLE: [u8; 256] = [
-            {}
+    code_tables = f'''
+        const LOG_TABLE: [{basic_type}; {len(K)}] = [
+            {', '.join(f'0x{v:02x}' for v in log_table)}
         ];
-        const ANTI_LOG_TABLE: [Self; 255] = [
-            {}
+        const ANTI_LOG_TABLE: [Self; {len(K)-1}] = [
+            {', '.join(f'Self(0x{v.to_integer():02x})' for v in anti_log_table)}
         ];
-    '''.format(
-            ', '.join(f'0x{v:02x}' for v in log_table),
-            ', '.join(f'Self(0x{v.to_integer():02x})' for v in anti_log_table))
+    '''
 
     print(code_tables)
 
@@ -97,7 +95,7 @@ def make_tables(name, K, g, K_values):
             {(',' + chr(0xa) + '            ').join(f'{name}(0x{v.to_integer():0{hexlen}x})' for v in prods)}
         ];
         const {name_caps}_INVS: [{name}; 4] = [
-            {(',' + chr(0xa) + '            ').join(f'{name}(0x{v.to_integer():0{hexlen}x})' for v in L_invs)}
+            {(',' + chr(0xa) + '            ').join(f'{name}(0x{v.to_integer():0{hexlen}x})' for v in invs)}
         ];
     '''
 
@@ -144,9 +142,13 @@ def make_tests(name, K):
 
     print(code_test_invs)
 
-make_tables('GF2p8', K8, g8, K8_values)
+#  make_tables('GF2p7', K7, g7, K7_values)
+#  make_tables('GF2p8', K8, g8, K8_values)
+make_tables('GF2p9', K9, g9, K9_values)
+make_tables('GF2p10', K10, g10, K10_values)
+make_tables('GF2p11', K11, g11, K11_values)
 
-make_tests('GF2p8', K8)
+#  make_tests('GF2p8', K8)
 
 #  L_values =  [
 #         L.from_integer(0x616ce329b8aee6b6c752890eaec5fdca),
