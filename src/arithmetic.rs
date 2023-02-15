@@ -1,4 +1,5 @@
-use crate::field::{GF2Vector, GF2View, GF2p8};
+use crate::gf2::{GF2Vector, GF2View};
+use crate::gf2psmall::GF2p8;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -21,6 +22,7 @@ make_clmul!(clmul_u8, u8, u16);
 make_clmul!(clmul_u64, u64, u128);
 
 #[cfg(target_arch = "x86_64")]
+#[inline(always)]
 pub fn clmul(x: u64, y: u64) -> u128 {
     let mut output = 0u128;
     unsafe {
@@ -31,6 +33,17 @@ pub fn clmul(x: u64, y: u64) -> u128 {
         _mm_storeu_si128(ptr as *mut __m128i, z)
     };
     output
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn clmul_u8_x86(x: u8, y: u8) -> u32 {
+    unsafe {
+        let x = _mm_set_epi64x(x as i64, y as i64);
+        let z = _mm_clmulepi64_si128(x, x, 0b01);
+        _mm_extract_epi32(z, 0) as u32
+        // _mm_extract_epi16(z, 0) as u16
+    }
 }
 
 type GF2p8Vector = Array1<GF2p8>;
@@ -196,7 +209,6 @@ pub fn bit_xor_assign_naive(ys: &mut GF2Vector, xs: &GF2Vector) {
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
-    use crate::field::GF2Vector;
     use ff::Field;
     use rand::{thread_rng, Rng};
 

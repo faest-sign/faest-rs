@@ -4,6 +4,11 @@ mod common;
 pub mod faest;
 pub mod fiat_shamir;
 pub mod field;
+#[macro_use]
+mod field_helpers;
+pub mod gf2;
+pub mod gf2p128;
+pub mod gf2psmall;
 pub mod homcom;
 mod primitives;
 mod traits;

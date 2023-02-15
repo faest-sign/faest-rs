@@ -1,4 +1,6 @@
-use crate::field::{GF2Vector, GF2p128, VecToGF2p128};
+use crate::field::VecToGF2p128;
+use crate::gf2::GF2Vector;
+use crate::gf2p128::GF2p128;
 use crate::voleith::{VoleInTheHeadReceiver, VoleInTheHeadSender};
 use core::fmt;
 use ndarray::{Array1, Axis};

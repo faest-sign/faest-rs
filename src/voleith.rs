@@ -1,7 +1,8 @@
 use crate::arithmetic::{
     bit_xor_assign, bitmul_accumulate, hash_bitvector_and_matrix, hash_matrix,
 };
-use crate::field::{GF2Vector, GF2View, GF2p8};
+use crate::gf2::{GF2Vector, GF2View};
+use crate::gf2psmall::GF2p8;
 use crate::veccom::VecCom;
 use core::marker::PhantomData;
 use core::mem;

@@ -1,6 +1,8 @@
 use crate::aes::{Aes, AesState, KeyExpansion, EXTENDED_WITNESS_BYTE_SIZE, ROUND_CONSTANTS};
-use crate::field::GF2Vector;
-use crate::field::{BytesRepr, GF2p128, GF2p8, InnerProduct};
+use crate::field::{BytesRepr, InnerProduct};
+use crate::gf2::GF2Vector;
+use crate::gf2p128::GF2p128;
+use crate::gf2psmall::GF2p8;
 use crate::homcom::{HomComReceiver, HomComSender};
 use ff::Field;
 use rand::{thread_rng, Rng, SeedableRng};

@@ -1,6 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ff::Field;
-use homcomzk::field::{GF2p128, GF2p128Fast, GF2p8, InnerProduct, LazyField};
+use homcomzk::field::{InnerProduct, LazyField};
+use homcomzk::gf2p128::{GF2p128, GF2p128Fast};
+use homcomzk::gf2psmall::GF2p8;
 use rand::thread_rng;
 
 fn bench_field<F>(name: &str, c: &mut Criterion)

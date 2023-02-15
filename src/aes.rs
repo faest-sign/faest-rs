@@ -1,4 +1,4 @@
-use crate::field::GF2p8;
+use crate::gf2psmall::GF2p8;
 use ff::Field;
 use std::fmt;
 

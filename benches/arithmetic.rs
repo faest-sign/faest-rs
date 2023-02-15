@@ -2,9 +2,10 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ff::Field;
 use homcomzk::arithmetic::{
     bit_xor_assign, bit_xor_assign_naive, bitmul_accumulate, bitmul_accumulate_naive, clmul,
-    clmul_u64, clmul_u8,
+    clmul_u64, clmul_u8, clmul_u8_x86,
 };
-use homcomzk::field::{GF2Vector, GF2p8};
+use homcomzk::gf2::GF2Vector;
+use homcomzk::gf2psmall::GF2p8;
 use rand::{thread_rng, Rng};
 
 pub fn bench_clmul(c: &mut Criterion) {
@@ -15,11 +16,11 @@ pub fn bench_clmul(c: &mut Criterion) {
         let y = thread_rng().gen();
         b.iter(|| black_box(clmul_u8(x, y)));
     });
-    // g.bench_function("8/clever", |b| {
-    //     let x = thread_rng().gen();
-    //     let y = thread_rng().gen();
-    //     b.iter(|| black_box(clmul_u8(x, y)));
-    // });
+    g.bench_function("8/clever", |b| {
+        let x = thread_rng().gen();
+        let y = thread_rng().gen();
+        b.iter(|| black_box(clmul_u8_x86(x, y)));
+    });
     g.bench_function("64/naive", |b| {
         let x = thread_rng().gen();
         let y = thread_rng().gen();
