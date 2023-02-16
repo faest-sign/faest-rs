@@ -10,7 +10,7 @@ use homcomzk::{keygen, FaestProver, FaestSignatureVerifier, FaestSigner, FaestVe
 pub fn bench_keygen(c: &mut Criterion) {
     let mut g = c.benchmark_group("keygen");
     for aes in [Aes::Aes128, Aes::Aes192, Aes::Aes256] {
-        g.bench_function(format!("{:?}", aes), |b| {
+        g.bench_function(format!("{aes:?}"), |b| {
             b.iter(|| black_box(keygen(aes)));
         });
     }
@@ -66,7 +66,7 @@ pub fn bench_faest_verify_signature<F: SmallGF>(g: &mut BenchmarkGroup<WallTime>
 }
 
 pub fn bench_faest_instance<F: SmallGF>(c: &mut Criterion, aes: Aes) {
-    let mut g = c.benchmark_group(format!("faest-{:?}-q={}", aes, F::ORDER));
+    let mut g = c.benchmark_group(format!("faest-{aes:?}-q={}", F::ORDER));
     bench_faest_interactive::<F>(&mut g, aes);
     bench_faest_sign::<F>(&mut g, aes);
     bench_faest_verify_signature::<F>(&mut g, aes);
@@ -80,7 +80,6 @@ pub fn bench_faest(c: &mut Criterion) {
         bench_faest_instance::<GF2p9>(c, aes);
         bench_faest_instance::<GF2p10>(c, aes);
         bench_faest_instance::<GF2p11>(c, aes);
-        break;
     }
 }
 
