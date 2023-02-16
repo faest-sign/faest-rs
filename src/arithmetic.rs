@@ -126,29 +126,7 @@ const fn gen_mask_table_u8() -> [u64; 256] {
     table
 }
 
-const fn gen_mask_table_u16() -> [u128; 256] {
-    const fn f(x: u8) -> u128 {
-        let mut m = 0;
-        let mut i = 0;
-        while i < 8 {
-            if x & (1 << i) != 0 {
-                m |= 0xffff << (i * 16);
-            }
-            i += 1;
-        }
-        m
-    }
-    let mut table = [0; 256];
-    let mut x = 0;
-    while x < 256 {
-        table[x] = f(x as u8);
-        x += 1;
-    }
-    table
-}
-
 const MASK_TABLE_U8: [u64; 256] = gen_mask_table_u8();
-const MASK_TABLE_U16: [u128; 256] = gen_mask_table_u16();
 
 /// Compute y_i += x * b_i for i = 0.. for <= 8 bit fields
 ///
@@ -172,36 +150,45 @@ where
 
     let x_as_byte = x.to_repr()[0];
 
-    unsafe {
-        let xs = _mm256_set1_epi8(x_as_byte as i8);
-        // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 32B
-        // blocks in the array.
-        let ymm_ptr = ys.as_mut_ptr() as *mut __m256i;
-        for j in 0..n_blocks {
-            let mask = [
-                MASK_TABLE_U8[bs[4 * j] as usize],
-                MASK_TABLE_U8[bs[4 * j + 1] as usize],
-                MASK_TABLE_U8[bs[4 * j + 2] as usize],
-                MASK_TABLE_U8[bs[4 * j + 3] as usize],
-            ];
-            let mask = _mm256_loadu_si256(mask.as_ptr() as *const __m256i);
-            let ymm_word = _mm256_loadu_si256(ymm_ptr.add(j));
-            let ymm_word = _mm256_xor_si256(ymm_word, _mm256_and_si256(mask, xs));
-            _mm256_storeu_si256(ymm_ptr.add(j), ymm_word);
+    if n_blocks > 0 {
+        unsafe {
+            let xs = _mm256_set1_epi8(x_as_byte as i8);
+            let bits = _mm256_set1_epi64x(0x8040201008040201u64 as i64);
+            let shuffle_ctrl = _mm256_set_epi64x(
+                0x0303030303030303,
+                0x0202020202020202,
+                0x0101010101010101,
+                0x0000000000000000,
+            );
+            // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 32B
+            // blocks in the array.
+            let ymm_ptr = ys.as_mut_ptr() as *mut __m256i;
+            let dword_bs_ptr = bs.as_ptr() as *mut i32;
+            for j in 0..n_blocks {
+                let mask = _mm256_set1_epi32(*dword_bs_ptr.add(j));
+                let mask = _mm256_shuffle_epi8(mask, shuffle_ctrl);
+                let mask = _mm256_and_si256(mask, bits);
+                let mask = _mm256_cmpeq_epi8(mask, bits);
+                let ymm_word = _mm256_loadu_si256(ymm_ptr.add(j));
+                let ymm_word = _mm256_xor_si256(ymm_word, _mm256_and_si256(mask, xs));
+                _mm256_storeu_si256(ymm_ptr.add(j), ymm_word);
+            }
         }
     }
 
     if n & 16 != 0 {
         unsafe {
             let xs = _mm_set1_epi8(x_as_byte as i8);
+            let bits = _mm_set1_epi64x(0x8040201008040201u64 as i64);
+            let shuffle_ctrl = _mm_set_epi64x(0x0101010101010101, 0x0000000000000000);
             // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 16B
             // blocks in the array.
             let xmm_ptr = (ys.as_mut_ptr() as *mut __m128i).add(2 * n_blocks);
-            let mask = [
-                MASK_TABLE_U8[bs[4 * n_blocks] as usize],
-                MASK_TABLE_U8[bs[4 * n_blocks + 1] as usize],
-            ];
-            let mask = _mm_loadu_si128(mask.as_ptr() as *const __m128i);
+            let word_bs_ptr = (bs.as_ptr() as *mut i16).add(2 * n_blocks);
+            let mask = _mm_set1_epi16(*word_bs_ptr);
+            let mask = _mm_shuffle_epi8(mask, shuffle_ctrl);
+            let mask = _mm_and_si128(mask, bits);
+            let mask = _mm_cmpeq_epi8(mask, bits);
             let xmm_word = _mm_loadu_si128(xmm_ptr);
             let xmm_word = _mm_xor_si128(xmm_word, _mm_and_si128(mask, xs));
             _mm_storeu_si128(xmm_ptr, xmm_word);
@@ -255,31 +242,49 @@ where
 
     let x_as_word = u16::from_le_bytes(x.to_repr());
 
-    unsafe {
-        let xs = _mm256_set1_epi16(x_as_word as i16);
-        // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 32B
-        // blocks in the array.
-        let ymm_ptr = ys.as_mut_ptr() as *mut __m256i;
-        for j in 0..n_blocks {
-            let mask = [
-                MASK_TABLE_U16[bs[2 * j] as usize],
-                MASK_TABLE_U16[bs[2 * j + 1] as usize],
-            ];
-            let mask = _mm256_loadu_si256(mask.as_ptr() as *const __m256i);
-            let ymm_word = _mm256_loadu_si256(ymm_ptr.add(j));
-            let ymm_word = _mm256_xor_si256(ymm_word, _mm256_and_si256(mask, xs));
-            _mm256_storeu_si256(ymm_ptr.add(j), ymm_word);
+    if n_blocks > 0 {
+        unsafe {
+            let xs = _mm256_set1_epi16(x_as_word as i16);
+            let bits = _mm256_set_epi64x(
+                0x8080404020201010u64 as i64,
+                0x0808040402020101u64 as i64,
+                0x8080404020201010u64 as i64,
+                0x0808040402020101u64 as i64,
+            );
+            let shuffle_ctrl = _mm256_set_epi64x(
+                0x0101010101010101,
+                0x0101010101010101,
+                0x0000000000000000,
+                0x0000000000000000,
+            );
+            // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 32B
+            // blocks in the array.
+            let ymm_ptr = ys.as_mut_ptr() as *mut __m256i;
+            let word_bs_ptr = bs.as_ptr() as *mut i16;
+            for j in 0..n_blocks {
+                let mask = _mm256_set1_epi16(*word_bs_ptr.add(j));
+                let mask = _mm256_shuffle_epi8(mask, shuffle_ctrl);
+                let mask = _mm256_and_si256(mask, bits);
+                let mask = _mm256_cmpeq_epi16(mask, bits);
+                let ymm_word = _mm256_loadu_si256(ymm_ptr.add(j));
+                let ymm_word = _mm256_xor_si256(ymm_word, _mm256_and_si256(mask, xs));
+                _mm256_storeu_si256(ymm_ptr.add(j), ymm_word);
+            }
         }
     }
 
     if n & 8 != 0 {
         unsafe {
             let xs = _mm_set1_epi16(x_as_word as i16);
+            let bits = _mm_set_epi64x(0x8080404020201010u64 as i64, 0x0808040402020101u64 as i64);
+            let shuffle_ctrl = _mm_setzero_si128();
             // This cast is also fine, since the remainder of the array is more than 16B big.
             let xmm_ptr = (ys.as_mut_ptr() as *mut __m128i).add(2 * n_blocks);
-            let mask = _mm_loadu_si128(
-                [MASK_TABLE_U16[bs[2 * n_blocks] as usize]].as_ptr() as *const __m128i
-            );
+            let byte_bs_ptr = (bs.as_ptr() as *mut i8).add(2 * n_blocks);
+            let mask = _mm_set1_epi8(*byte_bs_ptr);
+            let mask = _mm_shuffle_epi8(mask, shuffle_ctrl);
+            let mask = _mm_and_si128(mask, bits);
+            let mask = _mm_cmpeq_epi16(mask, bits);
             let xmm_word = _mm_loadu_si128(xmm_ptr);
             let xmm_word = _mm_xor_si128(xmm_word, _mm_and_si128(mask, xs));
             _mm_storeu_si128(xmm_ptr, xmm_word);
