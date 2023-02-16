@@ -347,14 +347,14 @@ impl KeyExpansion {
                 let (mut new_word, inv_out) = Self::sub_word(&Self::rot_word(&key_words[i - 1]));
                 inv_outputs.push(inv_out);
                 new_word[0] += ROUND_CONSTANTS[(i / N) - 1];
-                for j in 0..4 {
-                    key_words[i][j] = key_words[i - N][j] + new_word[j]
+                for (j, new_word_j) in new_word.iter().enumerate() {
+                    key_words[i][j] = key_words[i - N][j] + new_word_j;
                 }
             } else if i >= N && N > 6 && (i % N) == 4 {
                 let (new_word, inv_out) = Self::sub_word(&key_words[i - 1]);
                 inv_outputs.push(inv_out);
-                for j in 0..4 {
-                    key_words[i][j] = key_words[i - N][j] + new_word[j]
+                for (j, new_word_j) in new_word.iter().enumerate() {
+                    key_words[i][j] = key_words[i - N][j] + new_word_j;
                 }
             } else {
                 for j in 0..4 {
