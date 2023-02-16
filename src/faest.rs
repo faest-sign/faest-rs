@@ -9,8 +9,20 @@ use rand::{thread_rng, Rng, SeedableRng};
 use rand_chacha::ChaChaRng;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SecretKey {
-    pub key: [u8; 16],
+pub enum SecretKey {
+    Aes128Key { key: [u8; 16] },
+    Aes192Key { key: [u8; 24] },
+    Aes256Key { key: [u8; 32] },
+}
+
+impl SecretKey {
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Aes128Key { key } => key,
+            Self::Aes192Key { key } => key,
+            Self::Aes256Key { key } => key,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, bincode::Encode)]
@@ -19,23 +31,39 @@ pub struct PublicKey {
     pub output: [u8; 16],
 }
 
-pub fn keygen() -> (SecretKey, PublicKey) {
+pub fn keygen(variant: Aes) -> (SecretKey, PublicKey) {
     let mut rng = thread_rng();
 
     loop {
-        let key: [u8; 16] = rng.gen();
-        let input: [u8; 16] = rng.gen();
+        let key = {
+            let mut key = vec![0u8; variant.get_key_size()];
+            rng.fill(key.as_mut_slice());
+            key
+        };
+        let key_as_gf2p8: Vec<_> = key.iter().copied().map(GF2p8).collect();
         let (round_keys, inv_outs) =
-            KeyExpansion::expand_and_collect_inv_outputs_128(key.map(Into::into));
+            KeyExpansion::expand_and_collect_inv_outputs(variant, &key_as_gf2p8);
         if inv_outs.iter().any(|x| x.iter().any(|y| y.0 == 0)) {
             continue;
         }
-        let (output, inv_outs) = AesState::from(input).encrypt_and_collect_inv_outputs(round_keys);
+        let input: [u8; 16] = rng.gen();
+        let (output, inv_outs) =
+            AesState::from(input).encrypt_and_collect_inv_outputs(variant, &round_keys);
         if inv_outs.iter().any(|x| x.0.iter().any(|y| y.0 == 0)) {
             continue;
         }
         return (
-            SecretKey { key },
+            match variant {
+                Aes::Aes128 => SecretKey::Aes128Key {
+                    key: key.try_into().unwrap(),
+                },
+                Aes::Aes192 => SecretKey::Aes192Key {
+                    key: key.try_into().unwrap(),
+                },
+                Aes::Aes256 => SecretKey::Aes256Key {
+                    key: key.try_into().unwrap(),
+                },
+            },
             PublicKey {
                 input,
                 output: output.0.map(Into::into),
@@ -159,7 +187,11 @@ where
     }
 
     fn commit(&mut self) -> HCS::Commitment {
-        let witness = Aes::compute_extended_witness(self.secret_key.key, self.public_key.input);
+        let witness = Aes::compute_extended_witness(
+            Aes::Aes128,
+            self.secret_key.as_slice(),
+            &self.public_key.input,
+        );
 
         assert!(witness.is_some());
         let (mut witness, output) = witness.unwrap();
@@ -916,7 +948,7 @@ mod tests {
     type FaestVerifier<F> =
         FaestVerifierFromHC<HomCom128ReceiverFromVitH<VoleInTheHeadReceiverFromVC<F, VC>>>;
 
-    const SECRET_KEY: SecretKey = SecretKey {
+    const SECRET_KEY_128: SecretKey = SecretKey::Aes128Key {
         key: [
             0x42, 0x13, 0x4f, 0x71, 0x34, 0x89, 0x1b, 0x16, 0x82, 0xa8, 0xab, 0x56, 0x76, 0x27,
             0x30, 0x0c,
@@ -968,7 +1000,7 @@ mod tests {
     }
 
     fn test_correctness<F: SmallGF>() {
-        let mut prover = FaestProver::<F>::new(SECRET_KEY, PUBLIC_KEY);
+        let mut prover = FaestProver::<F>::new(SECRET_KEY_128, PUBLIC_KEY);
         let mut verifier = FaestVerifier::<F>::new(PUBLIC_KEY);
 
         let commitment = prover.commit();

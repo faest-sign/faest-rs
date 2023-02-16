@@ -1,5 +1,6 @@
 use crate::gf2psmall::GF2p8;
 use ff::Field;
+use itertools::izip;
 use std::fmt;
 
 pub const EXTENDED_WITNESS_BYTE_SIZE: usize = 16 + 10 * 4 + 16 * 10;
@@ -22,26 +23,82 @@ const fn F(x: u8) -> GF2p8 {
     GF2p8(x)
 }
 
-pub struct Aes {}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Aes {
+    Aes128,
+    Aes192,
+    Aes256,
+}
 
 impl Aes {
-    pub fn compute_extended_witness(key: [u8; 16], input: [u8; 16]) -> Option<(Vec<u8>, [u8; 16])> {
-        let mut buf = Vec::with_capacity(EXTENDED_WITNESS_BYTE_SIZE);
+    pub const fn get_key_size(self) -> usize {
+        match self {
+            Aes::Aes128 => 16,
+            Aes::Aes192 => 24,
+            Aes::Aes256 => 32,
+        }
+    }
+
+    pub const fn get_words_per_key(self) -> usize {
+        match self {
+            Aes::Aes128 => 4,
+            Aes::Aes192 => 6,
+            Aes::Aes256 => 8,
+        }
+    }
+
+    pub const fn get_number_rounds(self) -> usize {
+        match self {
+            Aes::Aes128 => 11,
+            Aes::Aes192 => 13,
+            Aes::Aes256 => 15,
+        }
+    }
+
+    pub const fn get_number_sbox_layers_in_key_schedule(self) -> usize {
+        match self {
+            Aes::Aes128 => 10,
+            Aes::Aes192 => 8,
+            Aes::Aes256 => 13,
+        }
+    }
+
+    pub const fn get_extended_witness_size(self) -> usize {
+        self.get_key_size()
+            + 4 * (self.get_number_sbox_layers_in_key_schedule())
+            + 16 * (self.get_number_rounds() - 1)
+    }
+
+    pub fn compute_extended_witness(
+        self,
+        key: &[u8],
+        input: &[u8; 16],
+    ) -> Option<(Vec<u8>, [u8; 16])> {
+        assert_eq!(key.len(), self.get_key_size());
+
+        let mut buf = Vec::with_capacity(self.get_extended_witness_size());
+
+        let key_as_gf2p8: Vec<_> = key.iter().copied().map(GF2p8).collect();
 
         let (round_keys, inv_outputs) =
-            KeyExpansion::expand_and_collect_inv_outputs_128(key.map(GF2p8));
+            KeyExpansion::expand_and_collect_inv_outputs(self, &key_as_gf2p8);
         if inv_outputs
             .iter()
             .any(|x| x.iter().any(|y| *y == GF2p8::ZERO))
         {
             return None;
         }
-        buf.extend(&key);
+        buf.extend(key);
+        assert_eq!(buf.len(), self.get_key_size());
         buf.extend(inv_outputs.iter().flatten().copied().map(Into::<u8>::into));
-        assert_eq!(buf.len(), 16 + 10 * 4);
+        assert_eq!(
+            buf.len(),
+            self.get_key_size() + 4 * self.get_number_sbox_layers_in_key_schedule()
+        );
 
         let input_state = AesState(input.map(GF2p8));
-        let (output_state, inv_outputs) = input_state.encrypt_and_collect_inv_outputs(round_keys);
+        let (output_state, inv_outputs) =
+            input_state.encrypt_and_collect_inv_outputs(self, &round_keys);
         if inv_outputs
             .iter()
             .any(|x| x.0.iter().any(|y| *y == GF2p8::ZERO))
@@ -52,7 +109,7 @@ impl Aes {
         buf.extend(inv_outputs.iter().flat_map(|x| x.0).map(Into::<u8>::into));
         let output = output_state.0.map(Into::into);
 
-        assert_eq!(buf.len(), EXTENDED_WITNESS_BYTE_SIZE);
+        assert_eq!(buf.len(), self.get_extended_witness_size());
 
         Some((buf, output))
     }
@@ -157,23 +214,27 @@ impl AesState {
         (tmp.shift_rows().add_round_key(round_key), inv_out)
     }
 
-    pub fn encrypt(&self, round_keys: [[GF2p8; 16]; 11]) -> Self {
-        self.encrypt_and_collect_inv_outputs(round_keys).0
+    pub fn encrypt(&self, variant: Aes, round_keys: &[[GF2p8; 16]]) -> Self {
+        self.encrypt_and_collect_inv_outputs(variant, round_keys).0
     }
 
+    #[allow(non_snake_case)]
     pub fn encrypt_and_collect_inv_outputs(
         &self,
-        round_keys: [[GF2p8; 16]; 11],
-    ) -> (Self, [Self; 10]) {
-        let mut intermediate_states: [Self; 10] = Default::default();
+        variant: Aes,
+        round_keys: &[[GF2p8; 16]],
+    ) -> (Self, Vec<Self>) {
+        let R = variant.get_number_rounds();
+        assert_eq!(round_keys.len(), R);
+        let mut intermediate_states = vec![Self::default(); R - 1];
         let mut tmp = self.add_round_key(round_keys[0]);
         let mut inv_out;
-        for (i, round_key_i) in round_keys.iter().take(10).skip(1).enumerate() {
+        for (i, round_key_i) in round_keys.iter().take(R - 1).skip(1).enumerate() {
             (tmp, inv_out) = tmp.round(*round_key_i);
             intermediate_states[i] = inv_out;
         }
         (tmp, inv_out) = tmp.last_round(round_keys[10]);
-        intermediate_states[9] = inv_out;
+        *intermediate_states.last_mut().unwrap() = inv_out;
         (tmp, intermediate_states)
     }
 }
@@ -265,28 +326,49 @@ impl KeyExpansion {
         (out, inv_out)
     }
 
-    pub fn expand_and_collect_inv_outputs_128(
-        key: [GF2p8; 16],
-    ) -> ([[GF2p8; 16]; 11], [[GF2p8; 4]; 10]) {
-        let mut round_keys: [[GF2p8; 16]; 11] = Default::default();
-        let mut inv_outputs = [[GF2p8::ZERO; 4]; 10];
-        round_keys[0] = key;
-        let rounds = 11;
-        for i in 1..rounds {
-            let (mut new_word, inv_out) =
-                Self::sub_word(&Self::rot_word(&round_keys[i - 1][12..16]));
-            inv_outputs[i - 1] = inv_out;
-            new_word[0] += ROUND_CONSTANTS[i - 1];
-            debug_assert_eq!(new_word.len(), 4);
-            for (j, new_word_j) in new_word.iter().copied().enumerate() {
-                round_keys[i][j] = new_word_j + round_keys[i - 1][j];
-            }
-            for k in 0..3 {
+    #[allow(non_snake_case)]
+    pub fn expand_and_collect_inv_outputs(
+        variant: Aes,
+        key: &[GF2p8],
+    ) -> (Vec<[GF2p8; 16]>, Vec<[GF2p8; 4]>) {
+        let R = variant.get_number_rounds();
+        let N = variant.get_words_per_key();
+
+        assert_eq!(key.len(), variant.get_key_size());
+
+        let mut inv_outputs =
+            Vec::<[GF2p8; 4]>::with_capacity(variant.get_number_sbox_layers_in_key_schedule());
+        let mut key_words = [[GF2p8::ZERO; 4]; 4 * Aes::Aes256.get_number_rounds()];
+
+        for i in 0..4 * R {
+            if i < N {
+                key_words[i].copy_from_slice(&key[i * 4..(i + 1) * 4]);
+            } else if i >= N && (i % N) == 0 {
+                let (mut new_word, inv_out) = Self::sub_word(&Self::rot_word(&key_words[i - 1]));
+                inv_outputs.push(inv_out);
+                new_word[0] += ROUND_CONSTANTS[(i - 1) / N];
                 for j in 0..4 {
-                    round_keys[i][4 * (k + 1) + j] =
-                        round_keys[i - 1][4 * (k + 1) + j] + round_keys[i][4 * k + j];
+                    key_words[i][j] = key_words[i - N][j] + new_word[j]
+                }
+            } else if i >= N && N > 6 && (i % N) == 4 {
+                let (new_word, inv_out) = Self::sub_word(&key_words[i - 1]);
+                inv_outputs.push(inv_out);
+                for j in 0..4 {
+                    key_words[i][j] = key_words[i - N][j] + new_word[j]
+                }
+            } else {
+                for j in 0..4 {
+                    key_words[i][j] = key_words[i - N][j] + key_words[i - 1][j];
                 }
             }
+        }
+
+        let mut round_keys = vec![[GF2p8::default(); 16]; R];
+        for (rk, kws) in izip!(round_keys.iter_mut(), key_words.chunks_exact(4)) {
+            rk[0..4].copy_from_slice(&kws[0]);
+            rk[4..8].copy_from_slice(&kws[1]);
+            rk[8..12].copy_from_slice(&kws[2]);
+            rk[12..16].copy_from_slice(&kws[3]);
         }
 
         (round_keys, inv_outputs)
@@ -541,8 +623,598 @@ mod tests {
                 F(0xa6),
             ],
         ];
-        let (expanded_key, _) = KeyExpansion::expand_and_collect_inv_outputs_128(key);
+        let (expanded_key, _) = KeyExpansion::expand_and_collect_inv_outputs(Aes::Aes128, &key);
         for i in 0..11 {
+            assert_eq!(
+                expanded_key[i], expected_round_keys[i],
+                "round key {i} incorrect"
+            );
+        }
+    }
+
+    #[test]
+    fn test_aes192_key_expand() {
+        let key: [GF2p8; Aes::Aes192.get_key_size()] = [
+            F(0x8e),
+            F(0x73),
+            F(0xb0),
+            F(0xf7),
+            F(0xda),
+            F(0x0e),
+            F(0x64),
+            F(0x52),
+            F(0xc8),
+            F(0x10),
+            F(0xf3),
+            F(0x2b),
+            F(0x80),
+            F(0x90),
+            F(0x79),
+            F(0xe5),
+            F(0x62),
+            F(0xf8),
+            F(0xea),
+            F(0xd2),
+            F(0x52),
+            F(0x2c),
+            F(0x6b),
+            F(0x7b),
+        ];
+        let expected_round_keys: [[GF2p8; 16]; Aes::Aes192.get_number_rounds()] = [
+            [
+                F(0x8e),
+                F(0x73),
+                F(0xb0),
+                F(0xf7),
+                F(0xda),
+                F(0x0e),
+                F(0x64),
+                F(0x52),
+                F(0xc8),
+                F(0x10),
+                F(0xf3),
+                F(0x2b),
+                F(0x80),
+                F(0x90),
+                F(0x79),
+                F(0xe5),
+            ],
+            [
+                F(0x62),
+                F(0xf8),
+                F(0xea),
+                F(0xd2),
+                F(0x52),
+                F(0x2c),
+                F(0x6b),
+                F(0x7b),
+                F(0xfe),
+                F(0x0c),
+                F(0x91),
+                F(0xf7),
+                F(0x24),
+                F(0x02),
+                F(0xf5),
+                F(0xa5),
+            ],
+            [
+                F(0xec),
+                F(0x12),
+                F(0x06),
+                F(0x8e),
+                F(0x6c),
+                F(0x82),
+                F(0x7f),
+                F(0x6b),
+                F(0x0e),
+                F(0x7a),
+                F(0x95),
+                F(0xb9),
+                F(0x5c),
+                F(0x56),
+                F(0xfe),
+                F(0xc2),
+            ],
+            [
+                F(0x4d),
+                F(0xb7),
+                F(0xb4),
+                F(0xbd),
+                F(0x69),
+                F(0xb5),
+                F(0x41),
+                F(0x18),
+                F(0x85),
+                F(0xa7),
+                F(0x47),
+                F(0x96),
+                F(0xe9),
+                F(0x25),
+                F(0x38),
+                F(0xfd),
+            ],
+            [
+                F(0xe7),
+                F(0x5f),
+                F(0xad),
+                F(0x44),
+                F(0xbb),
+                F(0x09),
+                F(0x53),
+                F(0x86),
+                F(0x48),
+                F(0x5a),
+                F(0xf0),
+                F(0x57),
+                F(0x21),
+                F(0xef),
+                F(0xb1),
+                F(0x4f),
+            ],
+            [
+                F(0xa4),
+                F(0x48),
+                F(0xf6),
+                F(0xd9),
+                F(0x4d),
+                F(0x6d),
+                F(0xce),
+                F(0x24),
+                F(0xaa),
+                F(0x32),
+                F(0x63),
+                F(0x60),
+                F(0x11),
+                F(0x3b),
+                F(0x30),
+                F(0xe6),
+            ],
+            [
+                F(0xa2),
+                F(0x5e),
+                F(0x7e),
+                F(0xd5),
+                F(0x83),
+                F(0xb1),
+                F(0xcf),
+                F(0x9a),
+                F(0x27),
+                F(0xf9),
+                F(0x39),
+                F(0x43),
+                F(0x6a),
+                F(0x94),
+                F(0xf7),
+                F(0x67),
+            ],
+            [
+                F(0xc0),
+                F(0xa6),
+                F(0x94),
+                F(0x07),
+                F(0xd1),
+                F(0x9d),
+                F(0xa4),
+                F(0xe1),
+                F(0xec),
+                F(0x17),
+                F(0x86),
+                F(0xeb),
+                F(0x6f),
+                F(0xa6),
+                F(0x49),
+                F(0x71),
+            ],
+            [
+                F(0x48),
+                F(0x5f),
+                F(0x70),
+                F(0x32),
+                F(0x22),
+                F(0xcb),
+                F(0x87),
+                F(0x55),
+                F(0xe2),
+                F(0x6d),
+                F(0x13),
+                F(0x52),
+                F(0x33),
+                F(0xf0),
+                F(0xb7),
+                F(0xb3),
+            ],
+            [
+                F(0x40),
+                F(0xbe),
+                F(0xeb),
+                F(0x28),
+                F(0x2f),
+                F(0x18),
+                F(0xa2),
+                F(0x59),
+                F(0x67),
+                F(0x47),
+                F(0xd2),
+                F(0x6b),
+                F(0x45),
+                F(0x8c),
+                F(0x55),
+                F(0x3e),
+            ],
+            [
+                F(0xa7),
+                F(0xe1),
+                F(0x46),
+                F(0x6c),
+                F(0x94),
+                F(0x11),
+                F(0xf1),
+                F(0xdf),
+                F(0x82),
+                F(0x1f),
+                F(0x75),
+                F(0x0a),
+                F(0xad),
+                F(0x07),
+                F(0xd7),
+                F(0x53),
+            ],
+            [
+                F(0xca),
+                F(0x40),
+                F(0x05),
+                F(0x38),
+                F(0x8f),
+                F(0xcc),
+                F(0x50),
+                F(0x06),
+                F(0x28),
+                F(0x2d),
+                F(0x16),
+                F(0x6a),
+                F(0xbc),
+                F(0x3c),
+                F(0xe7),
+                F(0xb5),
+            ],
+            [
+                F(0xe9),
+                F(0x8b),
+                F(0xa0),
+                F(0x6f),
+                F(0x44),
+                F(0x8c),
+                F(0x77),
+                F(0x3c),
+                F(0x8e),
+                F(0xcc),
+                F(0x72),
+                F(0x04),
+                F(0x01),
+                F(0x00),
+                F(0x22),
+                F(0x02),
+            ],
+        ];
+        let (expanded_key, _) = KeyExpansion::expand_and_collect_inv_outputs(Aes::Aes192, &key);
+        for i in 0..Aes::Aes192.get_number_rounds() {
+            assert_eq!(
+                expanded_key[i], expected_round_keys[i],
+                "round key {i} incorrect"
+            );
+        }
+    }
+
+    #[test]
+    fn test_aes256_key_expand() {
+        let key: [GF2p8; Aes::Aes256.get_key_size()] = [
+            F(0x60),
+            F(0x3d),
+            F(0xeb),
+            F(0x10),
+            F(0x15),
+            F(0xca),
+            F(0x71),
+            F(0xbe),
+            F(0x2b),
+            F(0x73),
+            F(0xae),
+            F(0xf0),
+            F(0x85),
+            F(0x7d),
+            F(0x77),
+            F(0x81),
+            F(0x1f),
+            F(0x35),
+            F(0x2c),
+            F(0x07),
+            F(0x3b),
+            F(0x61),
+            F(0x08),
+            F(0xd7),
+            F(0x2d),
+            F(0x98),
+            F(0x10),
+            F(0xa3),
+            F(0x09),
+            F(0x14),
+            F(0xdf),
+            F(0xf4),
+        ];
+        let expected_round_keys: [[GF2p8; 16]; Aes::Aes256.get_number_rounds()] = [
+            [
+                F(0x60),
+                F(0x3d),
+                F(0xeb),
+                F(0x10),
+                F(0x15),
+                F(0xca),
+                F(0x71),
+                F(0xbe),
+                F(0x2b),
+                F(0x73),
+                F(0xae),
+                F(0xf0),
+                F(0x85),
+                F(0x7d),
+                F(0x77),
+                F(0x81),
+            ],
+            [
+                F(0x1f),
+                F(0x35),
+                F(0x2c),
+                F(0x07),
+                F(0x3b),
+                F(0x61),
+                F(0x08),
+                F(0xd7),
+                F(0x2d),
+                F(0x98),
+                F(0x10),
+                F(0xa3),
+                F(0x09),
+                F(0x14),
+                F(0xdf),
+                F(0xf4),
+            ],
+            [
+                F(0x9b),
+                F(0xa3),
+                F(0x54),
+                F(0x11),
+                F(0x8e),
+                F(0x69),
+                F(0x25),
+                F(0xaf),
+                F(0xa5),
+                F(0x1a),
+                F(0x8b),
+                F(0x5f),
+                F(0x20),
+                F(0x67),
+                F(0xfc),
+                F(0xde),
+            ],
+            [
+                F(0xa8),
+                F(0xb0),
+                F(0x9c),
+                F(0x1a),
+                F(0x93),
+                F(0xd1),
+                F(0x94),
+                F(0xcd),
+                F(0xbe),
+                F(0x49),
+                F(0x84),
+                F(0x6e),
+                F(0xb7),
+                F(0x5d),
+                F(0x5b),
+                F(0x9a),
+            ],
+            [
+                F(0xd5),
+                F(0x9a),
+                F(0xec),
+                F(0xb8),
+                F(0x5b),
+                F(0xf3),
+                F(0xc9),
+                F(0x17),
+                F(0xfe),
+                F(0xe9),
+                F(0x42),
+                F(0x48),
+                F(0xde),
+                F(0x8e),
+                F(0xbe),
+                F(0x96),
+            ],
+            [
+                F(0xb5),
+                F(0xa9),
+                F(0x32),
+                F(0x8a),
+                F(0x26),
+                F(0x78),
+                F(0xa6),
+                F(0x47),
+                F(0x98),
+                F(0x31),
+                F(0x22),
+                F(0x29),
+                F(0x2f),
+                F(0x6c),
+                F(0x79),
+                F(0xb3),
+            ],
+            [
+                F(0x81),
+                F(0x2c),
+                F(0x81),
+                F(0xad),
+                F(0xda),
+                F(0xdf),
+                F(0x48),
+                F(0xba),
+                F(0x24),
+                F(0x36),
+                F(0x0a),
+                F(0xf2),
+                F(0xfa),
+                F(0xb8),
+                F(0xb4),
+                F(0x64),
+            ],
+            [
+                F(0x98),
+                F(0xc5),
+                F(0xbf),
+                F(0xc9),
+                F(0xbe),
+                F(0xbd),
+                F(0x19),
+                F(0x8e),
+                F(0x26),
+                F(0x8c),
+                F(0x3b),
+                F(0xa7),
+                F(0x09),
+                F(0xe0),
+                F(0x42),
+                F(0x14),
+            ],
+            [
+                F(0x68),
+                F(0x00),
+                F(0x7b),
+                F(0xac),
+                F(0xb2),
+                F(0xdf),
+                F(0x33),
+                F(0x16),
+                F(0x96),
+                F(0xe9),
+                F(0x39),
+                F(0xe4),
+                F(0x6c),
+                F(0x51),
+                F(0x8d),
+                F(0x80),
+            ],
+            [
+                F(0xc8),
+                F(0x14),
+                F(0xe2),
+                F(0x04),
+                F(0x76),
+                F(0xa9),
+                F(0xfb),
+                F(0x8a),
+                F(0x50),
+                F(0x25),
+                F(0xc0),
+                F(0x2d),
+                F(0x59),
+                F(0xc5),
+                F(0x82),
+                F(0x39),
+            ],
+            [
+                F(0xde),
+                F(0x13),
+                F(0x69),
+                F(0x67),
+                F(0x6c),
+                F(0xcc),
+                F(0x5a),
+                F(0x71),
+                F(0xfa),
+                F(0x25),
+                F(0x63),
+                F(0x95),
+                F(0x96),
+                F(0x74),
+                F(0xee),
+                F(0x15),
+            ],
+            [
+                F(0x58),
+                F(0x86),
+                F(0xca),
+                F(0x5d),
+                F(0x2e),
+                F(0x2f),
+                F(0x31),
+                F(0xd7),
+                F(0x7e),
+                F(0x0a),
+                F(0xf1),
+                F(0xfa),
+                F(0x27),
+                F(0xcf),
+                F(0x73),
+                F(0xc3),
+            ],
+            [
+                F(0x74),
+                F(0x9c),
+                F(0x47),
+                F(0xab),
+                F(0x18),
+                F(0x50),
+                F(0x1d),
+                F(0xda),
+                F(0xe2),
+                F(0x75),
+                F(0x7e),
+                F(0x4f),
+                F(0x74),
+                F(0x01),
+                F(0x90),
+                F(0x5a),
+            ],
+            [
+                F(0xca),
+                F(0xfa),
+                F(0xaa),
+                F(0xe3),
+                F(0xe4),
+                F(0xd5),
+                F(0x9b),
+                F(0x34),
+                F(0x9a),
+                F(0xdf),
+                F(0x6a),
+                F(0xce),
+                F(0xbd),
+                F(0x10),
+                F(0x19),
+                F(0x0d),
+            ],
+            [
+                F(0xfe),
+                F(0x48),
+                F(0x90),
+                F(0xd1),
+                F(0xe6),
+                F(0x18),
+                F(0x8d),
+                F(0x0b),
+                F(0x04),
+                F(0x6d),
+                F(0xf3),
+                F(0x44),
+                F(0x70),
+                F(0x6c),
+                F(0x63),
+                F(0x1e),
+            ],
+        ];
+        let (expanded_key, _) = KeyExpansion::expand_and_collect_inv_outputs(Aes::Aes256, &key);
+        for i in 0..Aes::Aes256.get_number_rounds() {
             assert_eq!(
                 expanded_key[i], expected_round_keys[i],
                 "round key {i} incorrect"
@@ -607,13 +1279,13 @@ mod tests {
             F(0x5a),
         ];
         let state = AesState::from(input_block);
-        let (round_keys, _) = KeyExpansion::expand_and_collect_inv_outputs_128(key);
-        let output_block = state.encrypt(round_keys);
+        let (round_keys, _) = KeyExpansion::expand_and_collect_inv_outputs(Aes::Aes128, &key);
+        let output_block = state.encrypt(Aes::Aes128, &round_keys);
         assert_eq!(output_block.0, expected_output_block);
     }
 
     #[test]
-    fn test_compute_extended_witness() {
+    fn test_aes128_compute_extended_witness() {
         let key = [
             0x42, 0x13, 0x4f, 0x71, 0x34, 0x89, 0x1b, 0x16, 0x82, 0xa8, 0xab, 0x56, 0x76, 0x27,
             0x30, 0x0c,
@@ -626,7 +1298,7 @@ mod tests {
             0x89, 0x13, 0xaf, 0x07, 0x31, 0xb5, 0x81, 0xdf, 0x8a, 0x0a, 0xb5, 0x6e, 0x08, 0x3c,
             0x6b, 0x7c,
         ];
-        let result = Aes::compute_extended_witness(key, input);
+        let result = Aes::Aes128.compute_extended_witness(&key, &input);
         assert!(result.is_some());
         let (_witness, computed_output) = result.unwrap();
         assert_eq!(computed_output, output);

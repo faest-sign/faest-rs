@@ -221,6 +221,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aes::Aes;
     use crate::common::Block128;
     use crate::faest::keygen;
     use crate::faest::{FaestProverFromHC, FaestVerifierFromHC};
@@ -236,8 +237,8 @@ mod tests {
     type FaestSigner<F> = FsSigner<FP<F>, FV<F>>;
     type FaestVerifier<F> = FsVerifier<FP<F>, FV<F>>;
 
-    fn test_correctness<F: SmallGF>() {
-        let (sk, pk) = keygen();
+    fn test_correctness<F: SmallGF>(aes: Aes) {
+        let (sk, pk) = keygen(aes);
         let message = "Am I happy or in misery?";
         let signer = FaestSigner::<F>::new(sk, pk);
         let signature = signer.sign(message.as_bytes());
@@ -256,12 +257,12 @@ mod tests {
     }
 
     #[test]
-    fn test_correctness_with_gf2p8() {
-        test_correctness::<GF2p8>();
+    fn test_correctness_aes128_with_gf2p8() {
+        test_correctness::<GF2p8>(Aes::Aes128);
     }
 
     #[test]
-    fn test_correctness_with_gf2p10() {
-        test_correctness::<GF2p10>();
+    fn test_correctness_aes128_with_gf2p10() {
+        test_correctness::<GF2p10>(Aes::Aes128);
     }
 }
