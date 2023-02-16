@@ -166,8 +166,10 @@ impl GF2p128Fast {
         y
     }
 
-    #[inline(always)]
-    fn gfmul(a: __m128i, b: __m128i) -> [__m128i; 2] {
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    #[target_feature(enable = "pclmulqdq")]
+    unsafe fn gfmul(a: __m128i, b: __m128i) -> [__m128i; 2] {
         unsafe {
             let c = _mm_clmulepi64_si128(a, b, 0x11);
             let d = _mm_clmulepi64_si128(a, b, 0x00);
@@ -185,8 +187,9 @@ impl GF2p128Fast {
         }
     }
 
-    #[inline(always)]
-    fn reduce(x: [__m128i; 2]) -> __m128i {
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    unsafe fn reduce(x: [__m128i; 2]) -> __m128i {
         unsafe {
             let [lo, hi] = x;
             let xmmmask = _mm_setr_epi32(i32::MAX, 0x0, 0x0, 0x0);
@@ -278,7 +281,7 @@ impl UnreducedField for UnreducedGF2p128Fast {
     const ZERO: Self = Self(unsafe { [XmmInitHelper { b: 0 }.a, XmmInitHelper { b: 0 }.a] });
     #[inline(always)]
     fn reduce(self) -> Self::ReducedField {
-        GF2p128Fast(GF2p128Fast::reduce(self.0))
+        GF2p128Fast(unsafe { GF2p128Fast::reduce(self.0) })
     }
 }
 
@@ -361,7 +364,7 @@ impl LazyMul for GF2p128Fast {
     type Output = UnreducedGF2p128Fast;
     #[inline(always)]
     fn lazy_mul(self, other: Self) -> Self::Output {
-        UnreducedGF2p128Fast(Self::gfmul(self.0, other.0))
+        UnreducedGF2p128Fast(unsafe { Self::gfmul(self.0, other.0) })
     }
 }
 
@@ -387,7 +390,7 @@ impl Mul for GF2p128Fast {
     type Output = Self;
     #[inline(always)]
     fn mul(self, other: Self) -> Self::Output {
-        Self(Self::reduce(Self::gfmul(self.0, other.0)))
+        Self(unsafe { Self::reduce(Self::gfmul(self.0, other.0)) })
     }
 }
 
