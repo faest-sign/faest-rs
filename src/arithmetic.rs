@@ -168,33 +168,58 @@ where
         bs.len() * 8
     );
 
-    let n_blocks = n / 16;
+    let n_blocks = n / 32;
 
     let x_as_byte = x.to_repr()[0];
 
     unsafe {
-        let xs = _mm_set1_epi8(x_as_byte as i8);
-        // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 16B
+        let xs = _mm256_set1_epi8(x_as_byte as i8);
+        // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 32B
         // blocks in the array.
-        let xmm_ptr = ys.as_mut_ptr() as *mut __m128i;
+        let ymm_ptr = ys.as_mut_ptr() as *mut __m256i;
         for j in 0..n_blocks {
             let mask = [
-                MASK_TABLE_U8[bs[2 * j] as usize],
-                MASK_TABLE_U8[bs[2 * j + 1] as usize],
+                MASK_TABLE_U8[bs[4 * j] as usize],
+                MASK_TABLE_U8[bs[4 * j + 1] as usize],
+                MASK_TABLE_U8[bs[4 * j + 2] as usize],
+                MASK_TABLE_U8[bs[4 * j + 3] as usize],
+            ];
+            let mask = _mm256_loadu_si256(mask.as_ptr() as *const __m256i);
+            let ymm_word = _mm256_loadu_si256(ymm_ptr.add(j));
+            let ymm_word = _mm256_xor_si256(ymm_word, _mm256_and_si256(mask, xs));
+            _mm256_storeu_si256(ymm_ptr.add(j), ymm_word);
+        }
+    }
+
+    if n & 16 != 0 {
+        unsafe {
+            let xs = _mm_set1_epi8(x_as_byte as i8);
+            // This cast is fine, since GF2p8 is wrapping a u8 and we have computed the number of 16B
+            // blocks in the array.
+            let xmm_ptr = (ys.as_mut_ptr() as *mut __m128i).add(2 * n_blocks);
+            let mask = [
+                MASK_TABLE_U8[bs[4 * n_blocks] as usize],
+                MASK_TABLE_U8[bs[4 * n_blocks + 1] as usize],
             ];
             let mask = _mm_loadu_si128(mask.as_ptr() as *const __m128i);
-            let xmm_word = _mm_loadu_si128(xmm_ptr.add(j));
+            let xmm_word = _mm_loadu_si128(xmm_ptr);
             let xmm_word = _mm_xor_si128(xmm_word, _mm_and_si128(mask, xs));
-            _mm_storeu_si128(xmm_ptr.add(j), xmm_word);
+            _mm_storeu_si128(xmm_ptr, xmm_word);
         }
     }
 
     if n & 8 != 0 {
         let xs = u64::from_le_bytes([x_as_byte; 8]);
         // This cast is also fine, since the remainder of the array is more than 8B big.
-        let q_ptr = unsafe { (ys.as_mut_ptr() as *mut u64).add(2 * n_blocks) };
-        let mask = MASK_TABLE_U8[bs[2 * n_blocks] as usize];
-        *q_ptr ^= mask & xs;
+        if n & 16 != 0 {
+            let q_ptr = unsafe { (ys.as_mut_ptr() as *mut u64).add(4 * n_blocks + 2) };
+            let mask = MASK_TABLE_U8[bs[4 * n_blocks + 2] as usize];
+            *q_ptr ^= mask & xs;
+        } else {
+            let q_ptr = unsafe { (ys.as_mut_ptr() as *mut u64).add(4 * n_blocks) };
+            let mask = MASK_TABLE_U8[bs[4 * n_blocks] as usize];
+            *q_ptr ^= mask & xs;
+        };
     }
 
     if n & 7 != 0 {
@@ -414,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_bitmul_accumulate_u8() {
-        let n = 16 + 8 + 3;
+        let n = 32 + 16 + 8 + 3;
         let x = GF2p8::random(thread_rng());
         let mut ys_1: Vec<_> = (0..n).map(|_| GF2p8::random(thread_rng())).collect();
         let mut ys_2 = ys_1.clone();
