@@ -233,7 +233,7 @@ impl AesState {
             (tmp, inv_out) = tmp.round(*round_key_i);
             intermediate_states[i] = inv_out;
         }
-        (tmp, inv_out) = tmp.last_round(round_keys[10]);
+        (tmp, inv_out) = tmp.last_round(round_keys[R - 1]);
         *intermediate_states.last_mut().unwrap() = inv_out;
         (tmp, intermediate_states)
     }
@@ -346,7 +346,7 @@ impl KeyExpansion {
             } else if i >= N && (i % N) == 0 {
                 let (mut new_word, inv_out) = Self::sub_word(&Self::rot_word(&key_words[i - 1]));
                 inv_outputs.push(inv_out);
-                new_word[0] += ROUND_CONSTANTS[(i - 1) / N];
+                new_word[0] += ROUND_CONSTANTS[(i / N) - 1];
                 for j in 0..4 {
                     key_words[i][j] = key_words[i - N][j] + new_word[j]
                 }

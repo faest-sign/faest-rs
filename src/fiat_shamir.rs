@@ -1,3 +1,4 @@
+use crate::aes::Aes;
 use crate::faest::{Prover as FaestProver, Verifier as FaestVerifier};
 use crate::{PublicKey, SecretKey};
 use blake3;
@@ -12,7 +13,7 @@ pub trait Signer {
 
 pub trait SignatureVerifier {
     type Signature;
-    fn new(public_key: PublicKey) -> Self;
+    fn new(aes: Aes, public_key: PublicKey) -> Self;
     fn verify(self, signature: &Self::Signature, message: &[u8]) -> bool;
 }
 
@@ -167,10 +168,10 @@ where
     P::Decommitment: bincode::Encode,
 {
     type Signature = FsSignature<P>;
-    fn new(public_key: PublicKey) -> Self {
+    fn new(aes: Aes, public_key: PublicKey) -> Self {
         Self {
             public_key,
-            verifier: V::new(public_key),
+            verifier: V::new(aes, public_key),
             _phantom_p: PhantomData,
         }
     }
@@ -225,7 +226,7 @@ mod tests {
     use crate::common::Block128;
     use crate::faest::keygen;
     use crate::faest::{FaestProverFromHC, FaestVerifierFromHC};
-    use crate::gf2psmall::{GF2p10, GF2p8, SmallGF};
+    use crate::gf2psmall::{GF2p10, GF2p11, GF2p7, GF2p8, GF2p9, SmallGF};
     use crate::homcom::{HomCom128ReceiverFromVitH, HomCom128SenderFromVitH};
     use crate::primitives::{Aes128CtrLdPrg, Blake3LE};
     use crate::veccom::GgmVecCom;
@@ -242,18 +243,33 @@ mod tests {
         let message = "Am I happy or in misery?";
         let signer = FaestSigner::<F>::new(sk, pk);
         let signature = signer.sign(message.as_bytes());
-        let verifier = FaestVerifier::<F>::new(pk);
+        let verifier = FaestVerifier::<F>::new(aes, pk);
         let result = verifier.verify(&signature, message.as_bytes());
         assert!(result);
         let encoded_signature = signature.to_bytes();
-        match F::LOG_ORDER {
-            7 => assert_eq!(encoded_signature.len(), 7506),
-            8 => assert_eq!(encoded_signature.len(), 6583),
-            9 => assert_eq!(encoded_signature.len(), 6435),
-            10 => assert_eq!(encoded_signature.len(), 5803),
-            11 => assert_eq!(encoded_signature.len(), 5559),
+        match (aes, F::LOG_ORDER) {
+            (Aes::Aes128, 7) => assert_eq!(encoded_signature.len(), 7506),
+            (Aes::Aes128, 8) => assert_eq!(encoded_signature.len(), 6583),
+            (Aes::Aes128, 9) => assert_eq!(encoded_signature.len(), 6435),
+            (Aes::Aes128, 10) => assert_eq!(encoded_signature.len(), 5803),
+            (Aes::Aes128, 11) => assert_eq!(encoded_signature.len(), 5559),
+            (Aes::Aes192, 7) => assert_eq!(encoded_signature.len(), 8114),
+            (Aes::Aes192, 8) => assert_eq!(encoded_signature.len(), 7095),
+            (Aes::Aes192, 9) => assert_eq!(encoded_signature.len(), 6915),
+            (Aes::Aes192, 10) => assert_eq!(encoded_signature.len(), 6219),
+            (Aes::Aes192, 11) => assert_eq!(encoded_signature.len(), 5943),
+            (Aes::Aes256, 7) => assert_eq!(encoded_signature.len(), 9254),
+            (Aes::Aes256, 8) => assert_eq!(encoded_signature.len(), 8055),
+            (Aes::Aes256, 9) => assert_eq!(encoded_signature.len(), 7815),
+            (Aes::Aes256, 10) => assert_eq!(encoded_signature.len(), 6999),
+            (Aes::Aes256, 11) => assert_eq!(encoded_signature.len(), 6663),
             _ => panic!("unknown field size"),
         }
+    }
+
+    #[test]
+    fn test_correctness_aes128_with_gf2p7() {
+        test_correctness::<GF2p7>(Aes::Aes128);
     }
 
     #[test]
@@ -262,7 +278,67 @@ mod tests {
     }
 
     #[test]
+    fn test_correctness_aes128_with_gf2p9() {
+        test_correctness::<GF2p9>(Aes::Aes128);
+    }
+
+    #[test]
     fn test_correctness_aes128_with_gf2p10() {
         test_correctness::<GF2p10>(Aes::Aes128);
+    }
+
+    #[test]
+    fn test_correctness_aes128_with_gf2p11() {
+        test_correctness::<GF2p11>(Aes::Aes128);
+    }
+
+    #[test]
+    fn test_correctness_aes192_with_gf2p7() {
+        test_correctness::<GF2p7>(Aes::Aes192);
+    }
+
+    #[test]
+    fn test_correctness_aes192_with_gf2p8() {
+        test_correctness::<GF2p8>(Aes::Aes192);
+    }
+
+    #[test]
+    fn test_correctness_aes192_with_gf2p9() {
+        test_correctness::<GF2p9>(Aes::Aes192);
+    }
+
+    #[test]
+    fn test_correctness_aes192_with_gf2p10() {
+        test_correctness::<GF2p10>(Aes::Aes192);
+    }
+
+    #[test]
+    fn test_correctness_aes192_with_gf2p11() {
+        test_correctness::<GF2p11>(Aes::Aes192);
+    }
+
+    #[test]
+    fn test_correctness_aes256_with_gf2p7() {
+        test_correctness::<GF2p7>(Aes::Aes256);
+    }
+
+    #[test]
+    fn test_correctness_aes256_with_gf2p8() {
+        test_correctness::<GF2p8>(Aes::Aes256);
+    }
+
+    #[test]
+    fn test_correctness_aes256_with_gf2p9() {
+        test_correctness::<GF2p9>(Aes::Aes256);
+    }
+
+    #[test]
+    fn test_correctness_aes256_with_gf2p10() {
+        test_correctness::<GF2p10>(Aes::Aes256);
+    }
+
+    #[test]
+    fn test_correctness_aes256_with_gf2p11() {
+        test_correctness::<GF2p11>(Aes::Aes256);
     }
 }

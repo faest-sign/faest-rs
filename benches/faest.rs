@@ -22,7 +22,7 @@ pub fn bench_faest_interactive<F: SmallGF>(g: &mut BenchmarkGroup<WallTime>, aes
         let (secret_key, public_key) = keygen(aes);
         b.iter(|| {
             let mut prover = FaestProver::<F>::new(secret_key, public_key);
-            let mut verifier = FaestVerifier::<F>::new(public_key);
+            let mut verifier = FaestVerifier::<F>::new(aes, public_key);
 
             let commitment = prover.commit();
             let challenge = verifier.commit_send_challenge(commitment);
@@ -58,7 +58,7 @@ pub fn bench_faest_verify_signature<F: SmallGF>(g: &mut BenchmarkGroup<WallTime>
         let signer = FaestSigner::<F>::new(secret_key, public_key);
         let signature = signer.sign(message.as_bytes());
         b.iter(|| {
-            let verifier = FaestSignatureVerifier::<F>::new(public_key);
+            let verifier = FaestSignatureVerifier::<F>::new(aes, public_key);
             let result = verifier.verify(&signature, message.as_bytes());
             black_box(result);
         });
