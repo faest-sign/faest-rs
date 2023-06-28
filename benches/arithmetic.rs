@@ -1,11 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use ff::Field;
-use homcomzk::arithmetic::{
+use faest::arithmetic::{
     bit_xor_assign, bit_xor_assign_naive, bitmul_accumulate_naive, bitmul_accumulate_u16,
     bitmul_accumulate_u8, clmul, clmul_u64, clmul_u8, clmul_u8_x86,
 };
-use homcomzk::gf2::GF2Vector;
-use homcomzk::gf2psmall::{GF2p8, GF2p9};
+use faest::gf2::GF2Vector;
+use faest::gf2psmall::{GF2p8, GF2p9};
+use ff::Field;
 use rand::{thread_rng, Rng};
 
 pub fn bench_clmul(c: &mut Criterion) {

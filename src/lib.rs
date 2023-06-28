@@ -15,7 +15,7 @@ mod traits;
 pub mod veccom;
 pub mod voleith;
 
-pub use faest::{keygen, PublicKey, SecretKey};
+pub use crate::faest::{keygen, PublicKey, SecretKey};
 
 type VC = veccom::GgmVecCom<
     common::Block128,

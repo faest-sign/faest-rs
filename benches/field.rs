@@ -1,9 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use faest::field::InnerProduct;
+use faest::gf2p128::GF2p128Fast;
+// use faest::gf2p128::GF2p128Naive;
+use faest::gf2psmall::{GF2p10, GF2p11, GF2p7, GF2p8, GF2p9};
 use ff::Field;
-use homcomzk::field::InnerProduct;
-use homcomzk::gf2p128::GF2p128Fast;
-// use homcomzk::gf2p128::GF2p128Naive;
-use homcomzk::gf2psmall::{GF2p10, GF2p11, GF2p7, GF2p8, GF2p9};
 use rand::thread_rng;
 
 fn bench_field<F>(name: &str, c: &mut Criterion)

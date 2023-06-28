@@ -1,11 +1,11 @@
 use criterion::{
     black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, Criterion,
 };
-use homcomzk::aes::Aes;
-use homcomzk::faest::{Prover, Verifier};
-use homcomzk::fiat_shamir::{SignatureVerifier, Signer};
-use homcomzk::gf2psmall::{GF2p10, GF2p11, GF2p7, GF2p8, GF2p9, SmallGF};
-use homcomzk::{keygen, FaestProver, FaestSignatureVerifier, FaestSigner, FaestVerifier};
+use faest::aes::Aes;
+use faest::faest::{Prover, Verifier};
+use faest::fiat_shamir::{SignatureVerifier, Signer};
+use faest::gf2psmall::{GF2p10, GF2p11, GF2p7, GF2p8, GF2p9, SmallGF};
+use faest::{keygen, FaestProver, FaestSignatureVerifier, FaestSigner, FaestVerifier};
 
 pub fn bench_keygen(c: &mut Criterion) {
     let mut g = c.benchmark_group("keygen");
